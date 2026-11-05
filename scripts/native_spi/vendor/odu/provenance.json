@@ -1,0 +1,57 @@
+{
+  "repository": "https://github.com/OpenQuatt/OpenQuatt-Simulator",
+  "commit": "e61e8abceaf24cd50f4bed97e80b46d1eb8ba9db",
+  "commit_date": "2026-10-23T17:56:36Z",
+  "purpose": "Read-only portable ODU model reference; no physical-hardware transport source",
+  "files": [
+    {
+      "source_path": "components/quatt_odu_simulator/quatt_odu_simulator_model.h",
+      "local_name": "quatt_odu_simulator_model.h",
+      "sha256": "9db7a4e98af15bfb16411b3cf18828c1875a82a8e5e8be47a26393dd7ea5bc36",
+      "bytes": 44679,
+      "source_url": "https://raw.githubusercontent.com/OpenQuatt/OpenQuatt-Simulator/e61e8abceaf24cd50f4bed97e80b46d1eb8ba9db/components/quatt_odu_simulator/quatt_odu_simulator_model.h"
+    },
+    {
+      "source_path": "components/quatt_odu_simulator/quatt_odu_communication_watchdog.h",
+      "local_name": "quatt_odu_communication_watchdog.h",
+      "sha256": "0ebfdd5f6c4a85670d2e7daedc319118f110887c2a5fe6dfdd92897a54682e4b",
+      "bytes": 1709,
+      "source_url": "https://raw.githubusercontent.com/OpenQuatt/OpenQuatt-Simulator/e61e8abceaf24cd50f4bed97e80b46d1eb8ba9db/components/quatt_odu_simulator/quatt_odu_communication_watchdog.h"
+    },
+    {
+      "source_path": "components/quatt_odu_simulator/quatt_odu_heating_limits.h",
+      "local_name": "quatt_odu_heating_limits.h",
+      "sha256": "ac1154663e526e65e8c09f7d85011a01711b25c73c5b0c18d035898c95f4646d",
+      "bytes": 4657,
+      "source_url": "https://raw.githubusercontent.com/OpenQuatt/OpenQuatt-Simulator/e61e8abceaf24cd50f4bed97e80b46d1eb8ba9db/components/quatt_odu_simulator/quatt_odu_heating_limits.h"
+    },
+    {
+      "source_path": "components/quatt_odu_simulator/quatt_odu_performance.generated.h",
+      "local_name": "quatt_odu_performance.generated.h",
+      "sha256": "c284f19cf74af86554533aee121ad848107797ab3fedb756b45c1c2e61696773",
+      "bytes": 77976,
+      "source_url": "https://raw.githubusercontent.com/OpenQuatt/OpenQuatt-Simulator/e61e8abceaf24cd50f4bed97e80b46d1eb8ba9db/components/quatt_odu_simulator/quatt_odu_performance.generated.h"
+    },
+    {
+      "source_path": "components/quatt_odu_simulator/quatt_odu_profiles.generated.h",
+      "local_name": "quatt_odu_profiles.generated.h",
+      "sha256": "0bd40bbf40bc08424b2f6a43141bd26849c6376876d17454a2a2d2aebd799213",
+      "bytes": 4007,
+      "source_url": "https://raw.githubusercontent.com/OpenQuatt/OpenQuatt-Simulator/e61e8abceaf24cd50f4bed97e80b46d1eb8ba9db/components/quatt_odu_simulator/quatt_odu_profiles.generated.h"
+    },
+    {
+      "source_path": "components/quatt_odu_simulator/quatt_odu_registers.generated.h",
+      "local_name": "quatt_odu_registers.generated.h",
+      "sha256": "9f791109346449d1b065da5baaa0a79c52342c36ed5fc2127eda8e1575269b2b",
+      "bytes": 7963,
+      "source_url": "https://raw.githubusercontent.com/OpenQuatt/OpenQuatt-Simulator/e61e8abceaf24cd50f4bed97e80b46d1eb8ba9db/components/quatt_odu_simulator/quatt_odu_registers.generated.h"
+    },
+    {
+      "source_path": "LICENSE",
+      "local_name": "LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "bytes": 35149,
+      "source_url": "https://raw.githubusercontent.com/OpenQuatt/OpenQuatt-Simulator/e61e8abceaf24cd50f4bed97e80b46d1eb8ba9db/LICENSE"
+    }
+  ]
+}

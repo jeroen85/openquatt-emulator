@@ -1,0 +1,9 @@
+.tmp/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.bin
+*.elf
+*.dylib
+.env*
+secrets.yaml
