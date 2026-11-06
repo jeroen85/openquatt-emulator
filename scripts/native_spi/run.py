@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack, closing, contextmanager, suppress
+from contextlib import ExitStack, contextmanager
 import fcntl
 import gzip
 import hashlib
@@ -29,10 +29,14 @@ from .atomic import atomic_json
 from .build import ensure, verify_original
 from .dynamics import Dynamics, wire_evidence
 from .factory import factory_info
+from .http_response import bounded_response
 from .lowflow import Lowflow
 from .memory import RECORDING_PATH, SAMPLE_SLACK_MS, lowflow_windows, normal_windows, summarize
 from .memory_comparison import compare, read_reference, require_match, runtime_fingerprint, settings
 from .network_probe import MODES, NetworkProbe
+from .pr_memory import assessment as pr_assessment, markdown as pr_markdown
+from .pr_memory import summarize_pr_recording
+from .pr_workload import PROBES_STOP_MS, WINDOWS as PR_WINDOWS, PrWebLoad, summarize_workload
 from .qualification import qualify
 from .transport import RtuPeer
 
@@ -66,46 +70,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-@contextmanager
 def recorder_response(port, deadline, cancelled):
-    def check_deadline():
-        if cancelled():
-            raise ConnectionAbortedError("Recorder download cancelled")
-        if time.monotonic() >= deadline:
-            raise TimeoutError("Recorder download deadline exceeded")
-
-    check_deadline()
-    timeout = max(0.001, deadline - time.monotonic())
-    with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)) as connection:
-        connection.connect()
-        check_deadline()
-        # HTTPConnection can release its own socket when a response will close.
-        # Keep a descriptor that can interrupt the headers or body at any time.
-        with connection.sock.dup() as interrupt_socket:
-            finished = threading.Event()
-
-            def interrupt():
-                while not finished.is_set():
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0 or cancelled():
-                        with suppress(OSError):
-                            interrupt_socket.shutdown(socket.SHUT_RDWR)
-                        return
-                    finished.wait(min(remaining, 0.05))
-
-            watchdog = threading.Thread(target=interrupt, name="recorder-deadline", daemon=True)
-            watchdog.start()
-            try:
-                connection.request("GET", RECORDING_PATH, headers={"Connection": "close"})
-                with connection.getresponse() as response:
-                    yield response
-                check_deadline()
-            except (OSError, http.client.HTTPException):
-                check_deadline()
-                raise
-            finally:
-                finished.set()
-                watchdog.join()
+    return bounded_response(port, RECORDING_PATH, deadline, cancelled)
 
 
 @contextmanager
@@ -141,11 +107,23 @@ def wait_for_owned_listeners(process, ports):
 
 def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0,
         network="wifi", scenario="compatibility", measure_memory=False, *,
-        memory_reference=None, memory_max_drop_bytes=None):
+        memory_reference=None, memory_max_drop_bytes=None,
+        baseline_firmware_sha256=None, without_overlap=False):
     if memory_max_drop_bytes is not None and (
             memory_reference is None or type(memory_max_drop_bytes) is not int or memory_max_drop_bytes < 0):
         raise ValueError("--memory-max-drop-bytes vereist een referentie en een geheel getal van nul of hoger")
-    if memory_reference is not None:
+    pr_memory = scenario == "pr-memory"
+    if pr_memory:
+        if mode != "device" or network != "wifi" or seconds < 230:
+            raise ValueError("pr-memory vereist device, Wi-Fi en minstens 230 hostseconden")
+        if (memory_reference is None) != (baseline_firmware_sha256 is None):
+            raise ValueError("pr-memory vereist bij een referentie ook --memory-baseline-firmware-sha256")
+        if baseline_firmware_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", baseline_firmware_sha256):
+            raise ValueError("Ongeldige SHA-256 voor de gekozen baselinefirmware")
+        measure_memory = True
+    elif baseline_firmware_sha256 is not None or without_overlap:
+        raise ValueError("De baselinehash en --without-overlap horen bij pr-memory")
+    if memory_reference is not None and not pr_memory:
         measure_memory = True
         require_match(settings(memory_reference["report"]), {
             "scenario": scenario, "mode": mode, "network": network,
@@ -159,9 +137,9 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Invalid local run name")
     if network not in MODES or (network != "wifi" and mode != "device"):
         raise ValueError("Ethernet requires the native device mode")
-    if scenario not in ("compatibility", "dynamics", "lowflow"):
+    if scenario not in ("compatibility", "dynamics", "lowflow", "pr-memory"):
         raise ValueError("Invalid test scenario")
-    if scenario != "compatibility" and (mode != "device" or network == "failover"):
+    if scenario in ("dynamics", "lowflow") and (mode != "device" or network == "failover"):
         raise ValueError("Dynamics and lowflow require device mode on a stable Wi-Fi or Ethernet route")
     if measure_memory and (mode != "device" or network == "failover" or scenario == "dynamics"):
         raise ValueError("--memory requires compatibility or lowflow in device mode on Wi-Fi or Ethernet")
@@ -174,11 +152,11 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         ports["ethernet"] = base + 1
     with reserve_ports(ports):
         return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
-                         memory_reference, memory_max_drop_bytes)
+                         memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap)
 
 
 def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
-              memory_reference, memory_max_drop_bytes):
+              memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -203,7 +181,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "native_build": native_build, "extension_sha256": sha(extension) if extension else None,
         "executable_sha256": sha(executable), "odu_library_sha256": sha(odu_library), "network": probe.result,
     }
-    if memory_reference is not None:
+    if memory_reference is not None and scenario != "pr-memory":
         require_match(runtime_fingerprint(memory_reference["report"]), runtime_fingerprint(report))
     if measure_memory:
         report["memory"] = {"complete": False, "error": "Geen heapopname ontvangen."}
@@ -239,7 +217,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     fleet = model.OduFleet(odu_library)
     peer = RtuPeer(fleet, guest_clock if mode == "device" else None)
     dynamics = None
-    if scenario != "compatibility":
+    if scenario in ("dynamics", "lowflow"):
         thermostat = out / "thermostat-heat"
         scenario_type = Lowflow if scenario == "lowflow" else Dynamics
         dynamics = scenario_type(thermostat, fleet)
@@ -252,6 +230,11 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     deadline = started + seconds
     stop = threading.Event()
     report_lock = threading.RLock()
+    pr_load = (PrWebLoad(ports["http"], guest_clock, started, deadline,
+                         lambda: _cancel_requested or stop.is_set(), without_overlap)
+               if scenario == "pr-memory" else None)
+    background = []
+    pr_end_ms = PR_WINDOWS["after"][1] + SAMPLE_SLACK_MS
     openers = {
         port: urllib.request.build_opener(urllib.request.ProxyHandler({}), LocalRedirect(port))
         for port in {ports["http"], ports.get("ethernet", ports["http"])}
@@ -368,7 +351,11 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         if memory_requested:
             return
         guest_ms = guest_clock()
-        if scenario == "lowflow":
+        if pr_load:
+            if guest_ms < pr_end_ms:
+                return
+            windows = PR_WINDOWS
+        elif scenario == "lowflow":
             if dynamics.result["stage"] != "complete":
                 return
             windows = lowflow_windows(dynamics.result)
@@ -389,7 +376,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             with recorder_response(port, download_deadline, lambda: _cancel_requested or stop.is_set()) as response:
                 data = read_http_body(response, RECORDING_PATH, port, download_deadline) if response.status == 200 else None
             if data:
-                report["memory"] = summarize(json.loads(data), windows, guest_clock())
+                summarize_recording = summarize_pr_recording if pr_load else summarize
+                report["memory"] = summarize_recording(json.loads(data), windows, guest_clock())
             else:
                 report["memory"]["error"] = "De ingebouwde systeemrecorder gaf geen opname terug."
         except TimeoutError:
@@ -435,6 +423,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             report["web_port"] = port
             if dynamics:
                 dynamics.observe(get)
+            if pr_load and report["web_checks"] >= 2:
+                pr_load.ready(guest_clock())
             if measure_memory:
                 inspect_memory(port)
 
@@ -460,7 +450,15 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 next_live = now + 1
             if report["setup_complete"] and now >= next_http:
                 next_http = now + 2
-                inspect_web()
+                if not pr_load:
+                    inspect_web()
+                else:
+                    probe_start = guest_clock()
+                    if probe_start < PROBES_STOP_MS or probe_start >= pr_end_ms:
+                        inspect_web()
+                        probe_end = guest_clock()
+                        if probe_start < PR_WINDOWS["after"][1] and probe_end >= PR_WINDOWS["before"][0]:
+                            background.append([probe_start, probe_end])
             stop.wait(max(0, min(0.2, deadline - time.monotonic())))
     except KeyboardInterrupt:
         report["cancelled"] = True
@@ -472,6 +470,20 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         report["elapsed_wall_s"] = workload_ended - started
         report["exit_before_cleanup"] = process.poll() if process else None
         report["emulator_stop_requested"] = False
+        if pr_load:
+            try:
+                if not pr_load.close():
+                    raise RuntimeError("PR-clients did not stop")
+                workload = summarize_workload(pr_load.schedule, pr_load.sse, pr_load.gets, background, pr_load.ready_ms)
+            except Exception as exc:
+                error("web workload cleanup", exc)
+                workload = {"valid": False, "issues": ["De afhandeling van de PR-clients is mislukt."],
+                            "confirmed_overlap_targets_ms": []}
+            report["pr_memory"] = {
+                "run_id": out.name, "plan": pr_load.schedule, "workload": workload,
+                "reset_path": "new_emulator_process_from_factory_copy",
+                "hardware_profile": "esp32s3-8M-psram-q-duo-native",
+            }
         peer.stop.set()
         try:
             if process and report["exit_before_cleanup"] is None:
@@ -551,7 +563,12 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         if _cancel_requested:
             report["cancelled"] = True
         report["qualification"], report["failure_reasons"] = qualify(report)
-        if memory_reference is not None:
+        if pr_load:
+            report["pr_memory"]["assessment"] = pr_assessment(
+                report, memory_reference, baseline_firmware_sha256, memory_max_drop_bytes,
+            )
+            report["qualification"], report["failure_reasons"] = qualify(report)
+        elif memory_reference is not None:
             report["memory_comparison"] = compare(
                 memory_reference, report, memory_max_drop_bytes, all(report["qualification"].values()),
             )
@@ -560,6 +577,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         report["status"] = "PASS_NATIVE_EXTENSION" if accepted else "NOT_QUALIFIED"
         if report.get("cancelled"):
             report["status"] = "STOPPED"
+        if pr_load:
+            (out / "pr-memory.md").write_text(pr_markdown(report["pr_memory"]["assessment"], report["pr_memory"]), encoding="utf-8")
         atomic_json(out / "report.json", report)
         publish_live()
         result = {
@@ -568,7 +587,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             "requests": report["peer"]["requests"], "responses": report["peer"]["responses"],
             "panics": len(report["panics"]), "errors": report["errors"], "cleanup": report["cleanup"],
         }
-        if memory_reference is not None:
+        if pr_load:
+            result["pr_memory"] = report["pr_memory"]["assessment"]["status"]
+        elif memory_reference is not None:
             result["memory_comparison"] = report["memory_comparison"]["status"]
         print(json.dumps(result), flush=True)
     return 0 if accepted else 1
@@ -589,22 +610,25 @@ if __name__ == "__main__":
     parser.add_argument("--name", default="factory")
     parser.add_argument("--temperature", type=float)
     parser.add_argument("--network", choices=MODES)
-    parser.add_argument("--scenario", choices=("compatibility", "dynamics", "lowflow"))
+    parser.add_argument("--scenario", choices=("compatibility", "dynamics", "lowflow", "pr-memory"))
     parser.add_argument("--memory", action="store_true", help="Read stock internal heap samples during compatibility or lowflow")
     parser.add_argument("--memory-baseline", type=Path, help="Compare the heap run with a qualified report.json")
-    parser.add_argument("--memory-max-drop-bytes", type=int, help="Fail when any heap metric drops more than this many bytes")
+    parser.add_argument("--memory-max-drop-bytes", type=int, help="Maximum heap drop in bytes. A PR-memory excess requests a repeat run.")
+    parser.add_argument("--memory-baseline-firmware-sha256", help="Expected dev factory-bin SHA-256 for pr-memory")
+    parser.add_argument("--without-overlap", action="store_true", help="Run the pr-memory negative control")
     args = parser.parse_args()
     try:
         reference = read_reference(args.memory_baseline) if args.memory_baseline is not None else None
         defaults = settings(reference["report"]) if reference else {}
         scenario = args.scenario or defaults.get("scenario", "compatibility")
-        default_seconds = {"compatibility": 90, "dynamics": 420, "lowflow": 780}
+        default_seconds = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240}
         seconds = args.seconds if args.seconds is not None else defaults.get("duration_s", default_seconds[scenario])
         raise SystemExit(run(
             args.firmware, seconds, args.mode or defaults.get("mode", "device"), args.port_base, args.name,
             args.temperature if args.temperature is not None else defaults.get("fixture_temperature_c", 30.0),
             args.network or defaults.get("network", "wifi"), scenario, args.memory,
             memory_reference=reference, memory_max_drop_bytes=args.memory_max_drop_bytes,
+            baseline_firmware_sha256=args.memory_baseline_firmware_sha256, without_overlap=args.without_overlap,
         ))
     except ValueError as exc:
         parser.error(str(exc))

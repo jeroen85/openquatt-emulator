@@ -77,6 +77,13 @@ def qualify(report):
         gaps = [name for name, phase in memory.get("phases", {}).items() if not phase["covered"]]
         reason = f"Onvoldoende heapmetingen voor {', '.join(gaps)}." if gaps else "De heapmeting is onvolledig."
         gates["memory"] = (memory.get("complete") is True, memory.get("error", reason))
+    if "pr_memory" in report:
+        pr = report["pr_memory"]
+        workload = pr["workload"]
+        gates["pr_memory_workload"] = (workload["valid"], " ".join(workload["issues"]))
+        if "assessment" in pr:
+            assessment = pr["assessment"]
+            gates["pr_memory_comparison"] = (assessment["status"] != "uncomparable", assessment["reason"])
     if "memory_comparison" in report:
         comparison = report["memory_comparison"]
         gates["memory_comparison"] = (

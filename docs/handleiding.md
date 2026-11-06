@@ -196,6 +196,39 @@ De runner neemt het scenario, de netwerkroute, de duur en de temperatuur uit het
 
 Met `--memory-max-drop-bytes 4096` geef je bijvoorbeeld per waarde en per fase een daling van maximaal 4096 bytes ruimte. Bij een grotere daling krijgt de vergelijking de status `regression` en geeft de runner een niet-nul exitcode. Zonder die optie rapporteert de runner de verschillen zonder geheugenbudget. Alleen volledig gekwalificeerde runs leveren vergelijkbare meetwaarden op.
 
+### Geheugenproef voor een PR
+
+`pr-memory` vergelijkt Q Duo-factory-bins via virtuele Wi-Fi. Elke proef start een nieuw emulatorproces met een eigen flashkopie. De vaste vensters op de ESP32-klok zijn 90–120 s rust, 120–180 s webbelasting en 180–210 s herstel. Eén client luistert naar `/events`. Een tweede client vraagt `/0.js` aan op vaste tijdstippen. Gewone webprobes pauzeren tijdens de meting. Na het herstelvenster leest de runner de systeemrecorder uit.
+
+```sh
+oq_dev_bin="/pad/naar/dev-q-duo.factory.bin"
+oq_pr_bin="/pad/naar/pr-q-duo.factory.bin"
+python3 -m scripts.native_spi.run --scenario pr-memory --firmware "$oq_dev_bin" \
+  --name pr-memory-dev
+
+oq_dev_report="/pad/naar/de/dev-run/report.json"
+oq_dev_sha="SHA-256-uit-het-buildmanifest-van-de-gekozen-dev-bin"
+python3 -m scripts.native_spi.run --scenario pr-memory --firmware "$oq_pr_bin" \
+  --memory-baseline "$oq_dev_report" --memory-baseline-firmware-sha256 "$oq_dev_sha" \
+  --name pr-memory-pr
+```
+
+Bewaar het oorspronkelijke `report.json`. De runner controleert de baselinehash tegen de gekozen dev-build, het resetpad en de simulatorinstellingen. Hij vergelijkt ook de gerealiseerde overlap per GET-tijdslot en het aantal ontvangen SSE-events. Onder `pr_memory.workload` staan begin-, ontvangst- en sluitmomenten op de host- en ESP32-klok. Een GET tijdens een stream die events levert toont overlap tussen clients. Gebruik firmwaremarkers om overlap tussen specifieke firmwareactiviteiten te meten.
+
+De run schrijft `pr-memory.md` als informatieve samenvatting voor de PR. Het rapport toont per fase de bemonsterde minima van de vrije heap en het grootste blok, heapmin sinds boot en de medianen voor rust en herstel. Bij het interval van 10 s kunnen korte dips tussen twee meetpunten vallen. Stackmarges en allocatiefouten staan voor de factory-bin op **onbekend**. De manifestcheck na 300 s stabiel netwerk valt buiten deze webproef.
+
+Gebruik `--without-overlap` voor de negatieve controle. Die laat beide clients na elkaar werken en hoort **Onvergelijkbaar** te geven met exitcode 1. Ontbrekende overlap, gemiste meetvensters en ongeschikte baselines krijgen eveneens dat oordeel. Zonder opgegeven grens blijft een geldig meetpaar bij **Gemeten zonder gekalibreerde grens**. Bepaal een grens met meerdere onafhankelijke boots van dezelfde firmware. Geef hem daarna door met `--memory-max-drop-bytes`. Een enkele overschrijding leidt tot **Herhalen**.
+
+Rapporteer een herhaling met twee verse runs. Gebruik het eerste baseline-kandidaatpaar en het tweede paar in deze volgorde.
+
+```sh
+python3 -m scripts.native_spi.pr_memory --baseline "$oq_dev_report" \
+  --candidate "$oq_pr_report" --baseline-firmware-sha256 "$oq_dev_sha" \
+  --max-drop-bytes "$oq_calibrated_limit" --repeat "$oq_dev_report_2" "$oq_pr_report_2"
+```
+
+De samenvatting toont de spreiding tussen de meetparen. Een gedeeld baselinerapport telt één keer. Verschillende uitslagen vragen om verdere herhaling. Gebruik fysieke HIL wanneer het oordeel afhangt van werkelijke geheugenmarges of een fysieke power-on.
+
 ## 5. Het resultaat lezen
 
 Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde map onder `.tmp/native-spi/runs/`. De status `PASS_NATIVE_EXTENSION` hoort bij een volledig geslaagde proef. Bij `NOT_QUALIFIED` geven `failure_reasons` en `qualification` aan welke controles ontbreken of faalden. Bij `STOPPED` is de proef voortijdig gestopt.

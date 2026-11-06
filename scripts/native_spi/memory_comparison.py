@@ -8,6 +8,7 @@ from .memory import SAMPLE_INTERVAL_S
 
 PHASES = {
     "compatibility": ("startup", "normal"),
+    "pr-memory": ("before", "load", "after"),
     "lowflow": ("startup", "defrost", "lowflow_recovery", "restart"),
 }
 METRICS = ("lowest_free_heap_b", "heapmin_at_last_sample_b", "lowest_largest_block_b")
@@ -27,6 +28,8 @@ def runtime_fingerprint(report):
     sources = ["memory.py", "model.py", "network_probe.py", "transport.py"]
     if settings(report)["scenario"] == "lowflow":
         sources.extend(("dynamics.py", "lowflow.py"))
+    if settings(report)["scenario"] == "pr-memory":
+        sources.extend(("run.py", "pr_workload.py", "pr_memory.py", "http_response.py"))
     fingerprint = {key: report[key] for key in ("executable_sha256", "extension_sha256", "odu_library_sha256")}
     fingerprint.update({name: report["sources"][name] for name in sources})
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in fingerprint.values()):
@@ -60,13 +63,18 @@ def measured_phases(report):
     return phases
 
 
+def read_report(path):
+    with path.open("rb") as source:
+        raw = source.read(MAX_REPORT_BYTES + 1)
+    if len(raw) > MAX_REPORT_BYTES:
+        raise ValueError("Het geheugenrapport is te groot")
+    return {"report": json.loads(raw), "report_sha256": hashlib.sha256(raw).hexdigest(), "path": str(path.resolve())}
+
+
 def read_reference(path):
     try:
-        with path.open("rb") as source:
-            raw = source.read(MAX_REPORT_BYTES + 1)
-        if len(raw) > MAX_REPORT_BYTES:
-            raise ValueError("Het referentierapport is te groot")
-        report = json.loads(raw)
+        evidence = read_report(path)
+        report = evidence["report"]
         gates = report["qualification"]
         firmware_sha256 = report["input"]["sha256"]
         if (report.get("schema") != 2 or report.get("status") != "PASS_NATIVE_EXTENSION"
@@ -78,7 +86,7 @@ def read_reference(path):
         runtime_fingerprint(report)
     except (OSError, AttributeError, KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"Kan geheugenreferentie {path} niet gebruiken: {exc}") from exc
-    return {"report": report, "report_sha256": hashlib.sha256(raw).hexdigest()}
+    return evidence
 
 
 def compare(reference, candidate, max_drop_bytes, qualified):
