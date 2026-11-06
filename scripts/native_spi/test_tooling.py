@@ -392,10 +392,10 @@ class MemoryEvidence(unittest.TestCase):
             "lowflow": {"fault_event": {"uptime_s": 64}, "restore_ms": 70000, "clear_window_ms": [104000, 106000]},
         }
 
-    def summarize(self, guest_ms=142000):
-        from .memory import summarize
+    def summarize(self, guest_ms=142000, windows=None):
+        from .memory import lowflow_windows, summarize
 
-        return summarize(self.recording, self.dynamics, guest_ms)
+        return summarize(self.recording, lowflow_windows(self.dynamics) if windows is None else windows, guest_ms)
 
     def test_phase_summaries_decode_deltas_and_keep_the_since_boot_watermark(self):
         result = self.summarize()
@@ -406,6 +406,25 @@ class MemoryEvidence(unittest.TestCase):
         self.assertEqual(defrost["lowest_free_heap_b"], 90000)
         self.assertEqual(recovery["lowest_largest_block_b"], 45000)
         self.assertEqual(restart["heapmin_at_last_sample_b"], 35000)
+
+    def test_normal_run_covers_startup_and_runtime_without_lowflow_checkpoints(self):
+        from .memory import normal_windows
+
+        self.recording["samples"] = self.recording["samples"][:6]
+        self.recording["recording"]["sample_count"] = 6
+        windows = normal_windows(9000, 58000)
+        self.assertEqual(windows, {"startup": (0, 20000), "normal": (20000, 58000)})
+        result = self.summarize(58000, windows)
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["phases"]["startup"]["sample_count"], 2)
+        self.assertEqual(result["phases"]["normal"]["sample_count"], 4)
+        self.assertEqual(result["phases"]["normal"]["lowest_free_heap_b"], 90000)
+
+    def test_normal_run_needs_thirty_seconds_after_late_web_readiness(self):
+        from .memory import normal_windows
+
+        self.assertIsNone(normal_windows(45000, 74999))
+        self.assertEqual(normal_windows(45000, 75000)["normal"], (45000, 75000))
 
     def test_missing_measurements_inside_recovery_prevent_qualification(self):
         self.recording["samples"].pop(8)

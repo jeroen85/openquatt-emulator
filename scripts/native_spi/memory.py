@@ -11,6 +11,8 @@ FIELDS = {
 RESTART_WINDOW_MS = 30000
 SAMPLE_SLACK_MS = 2500
 SAMPLE_INTERVAL_S = 10
+NORMAL_STARTUP_MIN_MS = 2 * SAMPLE_INTERVAL_S * 1000
+NORMAL_WINDOW_MIN_MS = 30000
 
 
 def read_samples(recording):
@@ -46,20 +48,30 @@ def read_samples(recording):
     return interval_s * 1000, samples
 
 
-def summarize(recording, dynamics, guest_now_ms):
-    interval_ms, samples = read_samples(recording)
-    max_gap = interval_ms + SAMPLE_SLACK_MS
-    if not 0 <= guest_now_ms - samples[-1]["guest_ms"] <= max_gap:
-        raise ValueError("De laatste recorderwaarde loopt niet mee met de firmwareklok")
+def lowflow_windows(dynamics):
     points = dynamics["checkpoints"]
     lowflow = dynamics["lowflow"]
     restart = points["restart"]["guest_ms"]
-    windows = {
+    return {
         "startup": (0, points["standby"]["observed_from_ms"]),
         "defrost": (points["defrost"]["guest_ms"], lowflow["fault_event"]["uptime_s"] * 1000),
         "lowflow_recovery": (lowflow["restore_ms"], lowflow["clear_window_ms"][0]),
         "restart": (restart, restart + RESTART_WINDOW_MS),
     }
+
+
+def normal_windows(web_ready_ms, guest_now_ms):
+    startup_end = max(web_ready_ms, NORMAL_STARTUP_MIN_MS)
+    if guest_now_ms - startup_end < NORMAL_WINDOW_MIN_MS:
+        return None
+    return {"startup": (0, startup_end), "normal": (startup_end, guest_now_ms)}
+
+
+def summarize(recording, windows, guest_now_ms):
+    interval_ms, samples = read_samples(recording)
+    max_gap = interval_ms + SAMPLE_SLACK_MS
+    if not 0 <= guest_now_ms - samples[-1]["guest_ms"] <= max_gap:
+        raise ValueError("De laatste recorderwaarde loopt niet mee met de firmwareklok")
     phases = {}
     for name, (start, end) in windows.items():
         selected = [row for row in samples if start <= row["guest_ms"] <= end]

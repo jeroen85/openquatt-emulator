@@ -29,7 +29,7 @@ from .build import ensure, verify_original
 from .dynamics import Dynamics, wire_evidence
 from .factory import factory_info
 from .lowflow import Lowflow
-from .memory import RECORDING_PATH, RESTART_WINDOW_MS, SAMPLE_SLACK_MS, summarize
+from .memory import RECORDING_PATH, SAMPLE_SLACK_MS, lowflow_windows, normal_windows, summarize
 from .network_probe import MODES, NetworkProbe
 from .qualification import qualify
 from .transport import RtuPeer
@@ -107,8 +107,8 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Invalid test scenario")
     if scenario != "compatibility" and (mode != "device" or network == "failover"):
         raise ValueError("Dynamics and lowflow require device mode on a stable Wi-Fi or Ethernet route")
-    if measure_memory and scenario != "lowflow":
-        raise ValueError("--memory requires --scenario lowflow")
+    if measure_memory and (mode != "device" or network == "failover" or scenario == "dynamics"):
+        raise ValueError("--memory requires compatibility or lowflow in device mode on Wi-Fi or Ethernet")
     if not 1024 <= base <= 65533:
         raise ValueError("Port base must be between 1024 and 65533")
 
@@ -147,6 +147,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     }
     if measure_memory:
         report["memory"] = {"complete": False, "error": "Geen heapopname ontvangen."}
+        if scenario == "compatibility":
+            report["memory"]["error"] = "Geen opname met minstens 30 seconden normaal bedrijf na opstarten."
     command = [
         str(executable), "--chip", "esp32s3", "--firmware", str(flash), "--psram-size", "8M",
         "--wifi-ssid", "OpenQuatt-Native-Probe", "--wifi-password", "native-probe-only",
@@ -294,21 +296,35 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
 
     verified_asset_ports = set()
     memory_requested = False
+    memory_web_ready_ms = None
 
     def inspect_memory(port):
-        nonlocal memory_requested
-        if memory_requested or dynamics.result["stage"] != "complete":
+        nonlocal memory_requested, memory_web_ready_ms
+        if memory_requested:
             return
-        restart_ms = dynamics.result["checkpoints"]["restart"]["guest_ms"]
-        if guest_clock() < restart_ms + RESTART_WINDOW_MS + SAMPLE_SLACK_MS:
-            return
+        guest_ms = guest_clock()
+        if scenario == "lowflow":
+            if dynamics.result["stage"] != "complete":
+                return
+            windows = lowflow_windows(dynamics.result)
+            if guest_ms < windows["restart"][1] + SAMPLE_SLACK_MS:
+                return
+        else:
+            if memory_web_ready_ms is None:
+                memory_web_ready_ms = guest_ms
+            # Leave time for the download before the existing run deadline.
+            if deadline - time.monotonic() > 12:
+                return
+            windows = normal_windows(memory_web_ready_ms, guest_ms)
+            if windows is None:
+                return
         memory_requested = True
         data = get(RECORDING_PATH, timeout=8, port=port)
         if not data:
             report["memory"]["error"] = "De ingebouwde systeemrecorder gaf geen opname terug."
             return
         try:
-            report["memory"] = summarize(json.loads(data), dynamics.result, guest_clock())
+            report["memory"] = summarize(json.loads(data), windows, guest_clock())
         except (KeyError, TypeError, ValueError) as exc:
             report["memory"]["error"] = str(exc)
 
@@ -497,7 +513,7 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=30.0)
     parser.add_argument("--network", choices=MODES, default="wifi")
     parser.add_argument("--scenario", choices=("compatibility", "dynamics", "lowflow"), default="compatibility")
-    parser.add_argument("--memory", action="store_true", help="Read stock internal heap samples during the lowflow scenario")
+    parser.add_argument("--memory", action="store_true", help="Read stock internal heap samples during compatibility or lowflow")
     args = parser.parse_args()
     default_seconds = {"compatibility": 90, "dynamics": 420, "lowflow": 780}
     seconds = args.seconds if args.seconds is not None else default_seconds[args.scenario]

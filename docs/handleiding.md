@@ -154,16 +154,25 @@ De controles volgen de ingebouwde tijden van de Q Duo-firmware van OpenQuatt-rev
 
 In `report.json` staan de flowdrempel, fout, stop, vrijgave en herstart onder `dynamics.checkpoints`. `dynamics.lowflow` bevat de tijdvensters in milliseconden op de ESP32-klok, de gebeurtenissen uit het firmwarelogboek en de Modbus-opdrachten voor stop en herstart. Een tijdvenster houdt rekening met de tijd tussen twee metingen. Controleer `qualification.lowflow_*` en lees bij een afwijking de bijbehorende `failure_reasons`.
 
-### Interne heap tijdens de lowflowproef
+### Interne heap bij opstarten en normaal bedrijf
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network ethernet --memory --name q-duo-memory
+```
+
+De standaardrun duurt 90 seconden en laat de regelaar opstarten met de gewone netwerk-, sensor- en buitenunitcontrole. De opstartfase omvat minstens de eerste 20 seconden op de ESP32-klok en loopt zo nodig door tot de eerste geslaagde webcontrole. Daarna volgt minstens 30 seconden normaal bedrijf. De runner leest de opname vlak voor het einde uit. Gebruik `--seconds` voor een langere meting of als de opstartfase meer tijd vraagt.
+
+Voeg `--scenario lowflow` toe om de heap ook tijdens defrost en flowherstel te meten.
 
 ```sh
 python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
   --network ethernet --scenario lowflow --memory --name q-duo-lowflow-memory
 ```
 
-De ongewijzigde Q Duo-bin legt de vrije interne heap, heapmin en het grootste vrije interne blok vast via de ingebouwde systeemrecorder. Deze recorder gebruikt `MALLOC_CAP_INTERNAL` en meet elke 10 seconden op de ESP32-klok. De runner leest de opname via loopback nadat de herstartfase is gemeten.
+De ongewijzigde Q Duo-bin legt de vrije interne heap, heapmin en het grootste vrije interne blok vast via de ingebouwde systeemrecorder. Deze recorder gebruikt `MALLOC_CAP_INTERNAL` en meet elke 10 seconden op de ESP32-klok. Bij de lowflowproef leest de runner de opname via loopback nadat de herstartfase is gemeten.
 
-Onder `memory.samples` staan de waarden in bytes per meetpunt. `memory.phases` vat de boot tot de eerste bevestigde standby, de actieve defrost tot de lowflowfout, het flowherstel tot de vrijgave en de eerste 30 seconden na de bevestigde herstart apart samen. In de defrostfase laat de proef ook de flow wegvallen. Per fase toont het rapport de laagste bemonsterde vrije heap, het kleinste bemonsterde grootste vrije blok en heapmin bij de laatste meting. Heapmin is de ESP-IDF-watermark sinds boot en draagt eerdere dips mee. Korte dips in de actuele vrije heap of blokgrootte kunnen tussen meetpunten vallen.
+Onder `memory.samples` staan de waarden in bytes per meetpunt. `memory.phases` toont opstarten en normaal bedrijf in de standaardrun. Bij de lowflowproef toont het de boot tot de eerste bevestigde standby, defrost tot de lowflowfout, flowherstel tot de vrijgave en de eerste 30 seconden na de bevestigde herstart. Per fase bevat het rapport de laagste bemonsterde vrije heap, het kleinste bemonsterde grootste vrije blok en heapmin bij de laatste meting. Heapmin is de ESP-IDF-watermark sinds boot en draagt eerdere dips mee. Korte dips in de actuele vrije heap of blokgrootte kunnen tussen meetpunten vallen.
 
 `qualification.memory` vereist een meetinterval van 10 seconden en voldoende dekking in alle fasen. Vergelijk firmwarebuilds met dezelfde netwerkroute, emulatorversie en instellingen. Gebruik de waarden voor regressievergelijking onder deze virtuele belasting.
 
