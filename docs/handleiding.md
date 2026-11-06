@@ -141,6 +141,10 @@ De proef begint met stilstand en nulflow. Daarna controleert hij de echte compre
 
 In `report.json` vind je de meetpunten onder `dynamics.checkpoints`, de bevestigde OpenTherm Data-ID's onder `dynamics.wire` en de klokstand onder `guest_uptime_ms` en `odu_uptime_ms`. De eindcontrole vereist recente voortgang van de ODU-klok en recente antwoorden op beide OpenTherm-aansluitingen. `mmio.jsonl` bevat de OpenTherm-frames met richting, RMT-kanaal en virtuele tijd.
 
+### Dagmeting met ketelwarmte
+
+Deze aparte labproef combineert OpenTherm-ketelwarmte en GPIO-flow. Hij controleert of dezelfde dagmeting doorloopt van CM3 naar CM4. De [ketelproefhandleiding](ketelproef.md) beschrijft de vastgezette firmwarebron, labbuild, regressietests en runner.
+
 ### Flowverlies tijdens defrost, vrijgave en herstart
 
 ```sh

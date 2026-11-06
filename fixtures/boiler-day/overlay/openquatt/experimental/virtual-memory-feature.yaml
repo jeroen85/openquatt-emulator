@@ -1,0 +1,35 @@
+# Virtual HIL only. Run the real clock consumer and HA-selected supply callback.
+substitutions:
+  oq_cm2_min_run_s: "30"
+  oq_cm3_promote_s: "15"
+  oq_cm3_min_run_s: "30"
+  oq_hp_min_runtime_min_s: "30"
+
+esphome:
+  includes:
+    - cv_virtual_clock.h
+  on_boot:
+    priority: -101
+    then:
+      - lambda: |-
+          cv_virtual_clock::start();
+          id(oq_virtual_flow).set_flow(800.0f);
+          id(oq_virtual_flow).set_enabled(true);
+
+external_components:
+  - source:
+      type: local
+      path: ../../scripts/simulator/io
+    components: [virtual_flow]
+
+virtual_flow:
+  id: oq_virtual_flow
+
+interval:
+  - interval: 2s
+    then:
+      - lambda: |-
+          const float outlet = id(hp2_water_out_temp).state;
+          if (!std::isfinite(outlet)) return;
+          id(water_supply_temp_ha).publish_state(outlet + (id(oq_boiler_transport_active) ? 6.0f : 0.0f));
+          id(water_supply_temp_valid_ha).publish_state(true);

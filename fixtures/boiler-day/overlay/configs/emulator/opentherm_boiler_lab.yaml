@@ -1,0 +1,18 @@
+# Test-only full Q Duo with a duplex RMT boiler appliance fixture.
+# The thermostat transport must stay disabled: both production RX96 channels
+# plus a peer receiver cannot fit in the S3's four RX48 memory blocks.
+substitutions:
+  oq_ot_enabled_default: "false"
+
+packages:
+  virtual_lab: !include lab_duo.yaml
+  ot_peer_controls: !include ../../scripts/simulator/io/virtual_opentherm/controls.yaml
+
+esphome:
+  build_path: ../../../.esphome/build/simulator_ot_boiler
+  compile_process_limit: 1
+
+virtual_opentherm:
+  id: lab_ot_peer
+  role: boiler
+  disabled_thermostat_switch: oq_ot_slave_enabled

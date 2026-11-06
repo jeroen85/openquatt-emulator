@@ -1,0 +1,45 @@
+# Experimental software-in-the-loop target; never flash to a physical controller.
+# Runs the production Q Duo packages with normal runtime WiFi provisioning and a serial
+# memory probe. No sensor, ODU or OpenTherm model is attached in this first stage.
+substitutions:
+  oq_emulator_sample_interval: 5s
+  device_name: openquatt-emu
+  friendly_name: OpenQuatt Emulator
+  project_name: openquatt.emulator
+
+packages:
+  q_duo: !include ../heatpump_controller_q/duo.yaml
+
+esphome:
+  build_path: ../../../.esphome/build/emulator_q_duo
+  compile_process_limit: 1
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          ESP_LOGI("oq_emu", "OQ_EMU_BOOT schema=1");
+
+# The emulator does not complete this board-specific GP-SPI transaction.
+# Keep the real MAX31865 sensor code, using bit-banged SPI with no probe attached.
+spi:
+  - id: !extend oq_hpcq_pt1000_spi
+    interface: software
+
+interval:
+  - interval: ${oq_emulator_sample_interval}
+    then:
+      - lambda: |-
+          const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+          multi_heap_info_t info{};
+          heap_caps_get_info(&info, caps);
+          ESP_LOGI("oq_emu", "OQ_EMU_MEMORY {\"schema\":1,\"uptime_ms\":%lu,"
+                   "\"internal_free\":%u,\"internal_min_free\":%u,"
+                   "\"internal_largest_block\":%u,\"psram_free\":%u,"
+                   "\"main_stack_hwm_bytes\":%u,\"heap_integrity\":%s}",
+                   static_cast<unsigned long>(millis()),
+                   static_cast<unsigned>(info.total_free_bytes),
+                   static_cast<unsigned>(info.minimum_free_bytes),
+                   static_cast<unsigned>(info.largest_free_block),
+                   static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)),
+                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
+                   heap_caps_check_integrity_all(true) ? "true" : "false");

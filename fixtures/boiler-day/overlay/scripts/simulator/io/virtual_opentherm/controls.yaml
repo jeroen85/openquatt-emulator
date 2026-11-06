@@ -1,0 +1,122 @@
+# Test-only peer controls. Configure with Online off, then enable last.
+external_components:
+  - source:
+      type: local
+      path: ../../scripts/simulator/io
+    components: [virtual_opentherm]
+
+switch:
+  - platform: template
+    name: Lab OT Peer Online
+    id: lab_ot_peer_online
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: id(lab_ot_peer).set_online(true);
+    turn_off_action:
+      - lambda: id(lab_ot_peer).set_online(false);
+  - platform: template
+    name: Lab OT Peer CH Enable
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: id(lab_ot_peer).set_ch_enable(true);
+    turn_off_action:
+      - lambda: id(lab_ot_peer).set_ch_enable(false);
+  - platform: template
+    name: Lab OT Peer Bad Parity
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: id(lab_ot_peer).set_bad_parity(true);
+    turn_off_action:
+      - lambda: id(lab_ot_peer).set_bad_parity(false);
+
+number:
+  - platform: template
+    name: Lab OT Peer Room Temperature
+    min_value: 5
+    max_value: 35
+    step: 0.1
+    unit_of_measurement: °C
+    update_interval: 1s
+    lambda: return id(lab_ot_peer).room_temperature();
+    set_action:
+      - lambda: id(lab_ot_peer).set_room_temperature(x);
+  - platform: template
+    name: Lab OT Peer Room Setpoint
+    min_value: 5
+    max_value: 35
+    step: 0.1
+    unit_of_measurement: °C
+    update_interval: 1s
+    lambda: return id(lab_ot_peer).room_setpoint();
+    set_action:
+      - lambda: id(lab_ot_peer).set_room_setpoint(x);
+  - platform: template
+    name: Lab OT Peer Control Setpoint
+    min_value: 0
+    max_value: 60
+    step: 0.1
+    unit_of_measurement: °C
+    update_interval: 1s
+    lambda: return id(lab_ot_peer).control_setpoint();
+    set_action:
+      - lambda: id(lab_ot_peer).set_control_setpoint(x);
+  - platform: template
+    name: Lab OT Peer Response Delay
+    min_value: 20
+    max_value: 1200
+    step: 1
+    unit_of_measurement: ms
+    update_interval: 1s
+    lambda: return id(lab_ot_peer).response_delay();
+    set_action:
+      - lambda: id(lab_ot_peer).set_response_delay(x);
+
+text_sensor:
+  - platform: template
+    name: Virtual OT Peer
+    update_interval: 5s
+    lambda: return {id(lab_ot_peer).profile()};
+  - platform: template
+    name: Virtual OT Peer Source SHA256
+    update_interval: 5s
+    entity_category: diagnostic
+    lambda: return {id(lab_ot_peer).source_sha256()};
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          char room[16], setpoint[16], control[16];
+          const auto number = [](char* text, float value) {
+            if (std::isfinite(value)) std::snprintf(text, 16, "%.3f", static_cast<double>(value));
+            else std::snprintf(text, 16, "null");
+          };
+          number(room, id(ot_thermostat_room_temp).state);
+          number(setpoint, id(ot_thermostat_room_setpoint).state);
+          number(control, id(ot_thermostat_control_setpoint).state);
+          ESP_LOGI("oq_ot_lab",
+                   "OQ_OT_CONTROLLER {\"schema\":1,\"uptime_ms\":%lu,\"thermostat_status_valid\":%s,"
+                   "\"ch_enable\":%s,\"room_c\":%s,\"room_setpoint_c\":%s,\"control_setpoint_c\":%s,"
+                   "\"room_fresh\":%s,\"room_setpoint_fresh\":%s,\"control_setpoint_fresh\":%s,"
+                   "\"received\":%lu,\"invalid\":%lu,\"timeouts\":%lu,\"boiler_link\":%s}",
+                   static_cast<unsigned long>(millis()),
+                   id(ot_thermostat_status_valid).state ? "true" : "false",
+                   id(ot_thermostat_ch_enable).state ? "true" : "false",
+                   room, setpoint, control,
+                   id(oq_ot_slave_hub).master_room_temperature_fresh() ? "true" : "false",
+                   id(oq_ot_slave_hub).master_room_setpoint_fresh() ? "true" : "false",
+                   id(oq_ot_slave_hub).master_control_setpoint_fresh() ? "true" : "false",
+                   static_cast<unsigned long>(id(oq_ot_slave_hub).successful_frame_count()),
+                   static_cast<unsigned long>(id(oq_ot_slave_hub).invalid_frame_count()),
+                   static_cast<unsigned long>(id(oq_ot_slave_hub).timeout_frame_count()),
+                   id(oq_otb_link_available_state) ? "true" : "false");
+
+button:
+  - platform: template
+    name: Lab OT Probe RX Budget
+    entity_category: diagnostic
+    on_press:
+      - lambda: id(lab_ot_peer).probe_rx_budget();

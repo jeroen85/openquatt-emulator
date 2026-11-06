@@ -1,0 +1,68 @@
+# Local virtual HCQ lab. Test-only timing and telemetry, never a release target.
+substitutions:
+  oq_emulator_sample_interval: 1s
+  oq_selected_input_stale_hold_s: "10"
+  oq_hp_min_off_s: "10"
+  api_input_outside_temperature_stale_s: "45"
+  api_input_room_temperature_stale_s: "45"
+  api_input_room_setpoint_stale_s: "45"
+  api_input_external_heat_demand_stale_s: "45"
+  api_input_heating_enable_stale_s: "45"
+
+packages:
+  emulator_q_duo: !include duo_wifi.yaml
+  lab_diagnostics: !include diagnostics.yaml
+  feature_package: !include ../../openquatt/experimental/virtual-memory-feature.yaml
+
+esphome:
+  build_path: ../../../.esphome/build/simulator_q_duo
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          ESP_LOGI("oq_lab", "OQ_LAB_STATE {\"uptime_ms\":%lu,\"control_mode\":%d,"
+                   "\"hp1_online\":%s,\"hp2_online\":%s,"
+                   "\"hp1_generation\":%d,\"hp2_generation\":%d,"
+                   "\"state_schema\":2,\"flow_valid\":%s,\"flow_lph\":%.3f,\"lowflow_fault\":%s,"
+                   "\"requested_level1\":%d,\"requested_level2\":%d,\"applied_level1\":%d,\"applied_level2\":%d}",
+                   static_cast<unsigned long>(millis()),
+                   static_cast<int>(id(oq_control_mode_code)),
+                   id(hp1_is_online) ? "true" : "false",
+                   id(hp2_is_online) ? "true" : "false",
+                   static_cast<int>(id(hp1_generation_variant_code)),
+                   static_cast<int>(id(hp2_generation_variant_code)),
+                   id(flow_rate_selected).has_state() && std::isfinite(id(flow_rate_selected).state) ? "true" : "false",
+                   std::isfinite(id(flow_rate_selected).state) ? id(flow_rate_selected).state : 0.0f,
+                   id(oq_lowflow_fault_active) ? "true" : "false",
+                   id(oq_actuator_hp1_req), id(oq_actuator_hp2_req),
+                   id(hp1_last_applied_level), id(hp2_last_applied_level));
+
+text_sensor:
+  - platform: template
+    name: Virtual Lab Profile
+    internal: true
+    update_interval: 5s
+    lambda: |-
+      return {"q-duo-local-lab-v1; UART1; min-off=10s; source-hold=10s; ingress-stale=45s"};
+
+button:
+  # Only the explicitly requested negative CLI test invokes this internal entity.
+  # It is not exposed as a Lab UI action and cumulative failures remain latched.
+  - platform: template
+    name: Lab Inject Allocation Failure
+    internal: true
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          oq_lab_diagnostics::inject_allocation_failure_for_test();
+          oq_lab_diagnostics::emit();
+
+# Identical bounded startup instrumentation for both memory-trial artifacts.
+external_components:
+  - source:
+      type: local
+      path: ../../scripts/simulator/firmware
+    components: [boot_memory_probe]
+
+boot_memory_probe:

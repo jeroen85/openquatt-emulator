@@ -14,6 +14,8 @@ python3 -m scripts.native_spi.server
 
 Open [de simulatorwerkbank](http://127.0.0.1:19450/) om een factory-bin te kiezen.
 
+Voor de virtuele dagmeting met OpenTherm-ketel en GPIO-flow is er een aparte labbuild met regressietests. [Dagmeting met ketelwarmte](docs/ketelproef.md)
+
 ## Emulatorcode testen
 
 ```sh

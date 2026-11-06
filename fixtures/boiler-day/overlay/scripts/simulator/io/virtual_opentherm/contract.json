@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "profiles": {
+    "ot-thermostat": {
+      "config": "configs/emulator/opentherm_lab.yaml",
+      "build": "simulator_ot_thermostat",
+      "role": "thermostat",
+      "marker": "ot-thermostat-ingress-v1",
+      "loopback": "1:4",
+      "thermostat_ingress": true,
+      "thermostat_ack_capture": false,
+      "boiler_duplex": false
+    },
+    "ot-boiler": {
+      "config": "configs/emulator/opentherm_boiler_lab.yaml",
+      "build": "simulator_ot_boiler",
+      "role": "boiler",
+      "marker": "ot-boiler-duplex-v1",
+      "loopback": "0:4,1:2",
+      "thermostat_ingress": false,
+      "thermostat_ack_capture": false,
+      "boiler_duplex": true,
+      "thermostat_disabled": true
+    }
+  },
+  "controls": {
+    "online": {
+      "entity": "Lab OT Peer Online",
+      "domain": "switch",
+      "type": "boolean",
+      "default": false
+    },
+    "ch_enable": {
+      "entity": "Lab OT Peer CH Enable",
+      "domain": "switch",
+      "type": "boolean",
+      "default": false
+    },
+    "bad_parity": {
+      "entity": "Lab OT Peer Bad Parity",
+      "domain": "switch",
+      "type": "boolean",
+      "default": false
+    },
+    "room_c": {
+      "entity": "Lab OT Peer Room Temperature",
+      "domain": "number",
+      "type": "number",
+      "min": 5,
+      "max": 35,
+      "default": 19
+    },
+    "room_setpoint_c": {
+      "entity": "Lab OT Peer Room Setpoint",
+      "domain": "number",
+      "type": "number",
+      "min": 5,
+      "max": 35,
+      "default": 21
+    },
+    "control_setpoint_c": {
+      "entity": "Lab OT Peer Control Setpoint",
+      "domain": "number",
+      "type": "number",
+      "min": 0,
+      "max": 60,
+      "default": 40
+    },
+    "response_delay_ms": {
+      "entity": "Lab OT Peer Response Delay",
+      "domain": "number",
+      "type": "integer",
+      "min": 20,
+      "max": 1200,
+      "default": 50,
+      "role": "boiler"
+    }
+  },
+  "fixture": {
+    "label": "Bounded synthetic digital boiler appliance; no physical or thermal qualification",
+    "read_f88": {
+      "18": 1.5,
+      "25": 42.5,
+      "26": 48,
+      "28": 35,
+      "56": 50,
+      "57": 60
+    },
+    "unknown_data_id_response_type": 7,
+    "invalid_write_response_type": 6,
+    "boiler_status_watchdog_ms": 30000
+  },
+  "production_freshness_ms": {
+    "master_status": 30000,
+    "link": 120000,
+    "room_field": 600000
+  },
+  "configuration_order": "Online false; validate and write all scalar controls; Online true last.",
+  "electrical_qualification": false,
+  "host_gpio_edge_api": false
+}
