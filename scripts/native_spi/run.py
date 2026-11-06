@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, closing, contextmanager, suppress
 import fcntl
 import gzip
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -37,6 +38,8 @@ from .transport import RtuPeer
 ROOT = Path(__file__).resolve().parents[2]
 LAB = ROOT / ".tmp/native-spi"
 PT1000 = "/sensor/" + urllib.parse.quote("Water Supply Temp (PT1000)", safe="")
+RECORDER_TIMEOUT_S = 8
+RECORDER_FINISH_MARGIN_S = 1
 _cancel_requested = False
 
 
@@ -60,6 +63,48 @@ class LocalRedirect(urllib.request.HTTPRedirectHandler):
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+@contextmanager
+def recorder_response(port, deadline, cancelled):
+    def check_deadline():
+        if cancelled():
+            raise ConnectionAbortedError("Recorder download cancelled")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Recorder download deadline exceeded")
+
+    check_deadline()
+    timeout = max(0.001, deadline - time.monotonic())
+    with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)) as connection:
+        connection.connect()
+        check_deadline()
+        # HTTPConnection can release its own socket when a response will close.
+        # Keep a descriptor that can interrupt the headers or body at any time.
+        with connection.sock.dup() as interrupt_socket:
+            finished = threading.Event()
+
+            def interrupt():
+                while not finished.is_set():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or cancelled():
+                        with suppress(OSError):
+                            interrupt_socket.shutdown(socket.SHUT_RDWR)
+                        return
+                    finished.wait(min(remaining, 0.05))
+
+            watchdog = threading.Thread(target=interrupt, name="recorder-deadline", daemon=True)
+            watchdog.start()
+            try:
+                connection.request("GET", RECORDING_PATH, headers={"Connection": "close"})
+                with connection.getresponse() as response:
+                    yield response
+                check_deadline()
+            except (OSError, http.client.HTTPException):
+                check_deadline()
+                raise
+            finally:
+                finished.set()
+                watchdog.join()
 
 
 @contextmanager
@@ -257,6 +302,26 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             snapshot["phase"] = "testing"
         atomic_json(out / "live.json", snapshot)
 
+    def read_http_body(response, path, port, request_deadline):
+        raw = response.read(1024 * 1024 + 1)
+        if time.monotonic() >= request_deadline or _cancel_requested:
+            return None
+        if len(raw) > 1024 * 1024:
+            raise ValueError("HTTP wire size bound exceeded")
+        data = raw
+        if response.headers.get("Content-Encoding") == "gzip" or raw.startswith(b"\x1f\x8b"):
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:
+                data = compressed.read(4 * 1024 * 1024 + 1)
+        if len(data) > 4 * 1024 * 1024:
+            raise ValueError("Decoded HTTP size bound exceeded")
+        if time.monotonic() >= request_deadline or _cancel_requested:
+            return None
+        report["http"].append({
+            "path": path.split("?")[0], "status": response.status, "wire_bytes": len(raw),
+            "bytes": len(data), "wall_s": round(time.monotonic() - started, 3), "port": port,
+        })
+        return data
+
     def get(path, timeout=2, *, port=None, method="GET", any_status=False):
         remaining = deadline - time.monotonic()
         if remaining <= 0 or _cancel_requested:
@@ -270,22 +335,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             with opener.open(request, timeout=min(timeout, remaining)) as response:
                 if any_status:
                     return b""
-                raw = response.read(1024 * 1024 + 1)
-                if len(raw) > 1024 * 1024:
-                    raise ValueError("HTTP wire size bound exceeded")
-                data = raw
-                if response.headers.get("Content-Encoding") == "gzip" or raw.startswith(b"\x1f\x8b"):
-                    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:
-                        data = compressed.read(4 * 1024 * 1024 + 1)
-                if len(data) > 4 * 1024 * 1024:
-                    raise ValueError("Decoded HTTP size bound exceeded")
-                if time.monotonic() >= deadline or _cancel_requested:
-                    return None
-                report["http"].append({
-                    "path": path.split("?")[0], "status": response.status, "wire_bytes": len(raw),
-                    "bytes": len(data), "wall_s": round(time.monotonic() - started, 3), "port": port,
-                })
-                return data
+                return read_http_body(response, path, port, deadline)
         except urllib.error.HTTPError as exc:
             exc.close()
             return b"" if any_status else None
@@ -319,13 +369,17 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             if windows is None:
                 return
         memory_requested = True
-        data = get(RECORDING_PATH, timeout=8, port=port)
-        if not data:
-            report["memory"]["error"] = "De ingebouwde systeemrecorder gaf geen opname terug."
-            return
+        download_deadline = min(time.monotonic() + RECORDER_TIMEOUT_S, deadline - RECORDER_FINISH_MARGIN_S)
         try:
-            report["memory"] = summarize(json.loads(data), windows, guest_clock())
-        except (KeyError, TypeError, ValueError) as exc:
+            with recorder_response(port, download_deadline, lambda: _cancel_requested or stop.is_set()) as response:
+                data = read_http_body(response, RECORDING_PATH, port, download_deadline) if response.status == 200 else None
+            if data:
+                report["memory"] = summarize(json.loads(data), windows, guest_clock())
+            else:
+                report["memory"]["error"] = "De ingebouwde systeemrecorder gaf geen opname terug."
+        except TimeoutError:
+            report["memory"]["error"] = "De download van de systeemrecorder is afgebroken na de tijdslimiet."
+        except (OSError, EOFError, http.client.HTTPException, KeyError, TypeError, ValueError) as exc:
             report["memory"]["error"] = str(exc)
 
     def inspect_web():

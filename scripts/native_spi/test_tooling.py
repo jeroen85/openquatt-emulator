@@ -3,9 +3,11 @@ import hashlib
 import http.client
 import json
 from pathlib import Path
+import socket
 import struct
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 from http.server import ThreadingHTTPServer
@@ -164,6 +166,65 @@ class Loopback(unittest.TestCase):
         self.manager.stop()
         self.manager.stop()
         process.terminate.assert_called_once()
+
+
+class RecorderDeadline(unittest.TestCase):
+    def check_interrupted(self, headers, fragment, *, cancel=False):
+        from .run import recorder_response
+
+        finished = threading.Event()
+        cancelled = threading.Event()
+        sent = []
+
+        def drip():
+            connection, _ = listener.accept()
+            with connection:
+                request = bytearray()
+                while b"\r\n\r\n" not in request:
+                    data = connection.recv(4096)
+                    if not data:
+                        return
+                    request.extend(data)
+                try:
+                    connection.sendall(headers)
+                    for _ in range(40):
+                        connection.sendall(fragment)
+                        sent.append(fragment)
+                        if cancel and len(sent) == 3:
+                            cancelled.set()
+                        if finished.wait(0.04):
+                            return
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            listener.settimeout(2)
+            thread = threading.Thread(target=drip, daemon=True)
+            thread.start()
+            started = time.monotonic()
+            deadline = started + (2 if cancel else 0.35)
+            expected = ConnectionAbortedError if cancel else TimeoutError
+            try:
+                with self.assertRaises(expected):
+                    with recorder_response(listener.getsockname()[1], deadline, cancelled.is_set) as response:
+                        response.read(1024)
+                self.assertLess(time.monotonic() - started, 1)
+                self.assertGreaterEqual(len(sent), 2)
+            finally:
+                finished.set()
+                thread.join(2)
+            self.assertFalse(thread.is_alive())
+
+    def test_trickling_headers_cannot_extend_recorder_deadline(self):
+        self.check_interrupted(b"HTTP/1.1 200 OK\r\nX-Recorder: ", b"x")
+
+    def test_trickling_chunks_cannot_extend_recorder_deadline(self):
+        self.check_interrupted(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", b"1\r\nx\r\n")
+
+    def test_cancellation_interrupts_recorder_before_its_deadline(self):
+        self.check_interrupted(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", b"1\r\nx\r\n", cancel=True)
 
 
 class EvidenceGates(unittest.TestCase):

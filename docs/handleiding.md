@@ -176,6 +176,8 @@ Onder `memory.samples` staan de waarden in bytes per meetpunt. `memory.phases` t
 
 `qualification.memory` vereist een meetinterval van 10 seconden en voldoende dekking in alle fasen. Vergelijk firmwarebuilds met dezelfde netwerkroute, emulatorversie en instellingen. Gebruik de waarden voor regressievergelijking onder deze virtuele belasting.
 
+De recorderdownload krijgt maximaal acht seconden, binnen de ingestelde testduur. Bij een timeout sluit de runner de verbinding en vermeldt `failure_reasons` dat de opname onvolledig is.
+
 ## 5. Het resultaat lezen
 
 Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde map onder `.tmp/native-spi/runs/`. De status `PASS_NATIVE_EXTENSION` hoort bij een volledig geslaagde proef. Bij `NOT_QUALIFIED` geven `failure_reasons` en `qualification` aan welke controles ontbreken of faalden. Bij `STOPPED` is de proef voortijdig gestopt.
