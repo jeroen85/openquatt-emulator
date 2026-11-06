@@ -2,41 +2,19 @@
 
 Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virtuele ESP32-S3 te draaien. De runner test firmwareboot, de echte OpenQuatt web-app, de PT1000 en Modbus-verkeer met beide buitenunits. De emulator gebruikt de gekozen bin als flashimage. Een firmware-ELF of debuggerbrug is overbodig.
 
-## Starten op macOS arm64
+## Installatie en gebruik
 
-Vereist Python 3.11 of nieuwer, de Xcode Command Line Tools en libslirp 4.9 met pkg-config. De bevestigde libslirp-versie is 4.9.5.
+De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. Je vindt er ook uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
 
-```sh
-brew install libslirp pkgconf
-mkdir -p .tmp/native-spi/runtime
-```
-
-Pak de macOS-arm64-release van [esp-emu 0.51.0](https://github.com/espressif/esp-emulator/releases/tag/v0.51.0) uit. Plaats het oorspronkelijke uitvoerbare bestand onder `.tmp/native-spi/runtime/esp-emu.original`. De vereiste SHA-256 van dit uitgepakte bestand is `162761d52bcee36fe8be5fd039202fed5873ca550a83a12229038311a4bbc18c`.
+Start na de installatie de werkbank vanuit deze repo.
 
 ```sh
 python3 -m scripts.native_spi.server
 ```
 
-Open [de werkbank](http://127.0.0.1:19450/), kies een factory-bin en selecteer de netwerkproef. De werkbank genereert de hostuitbreiding en de buitenunitfixture bij de eerste run. Als 19450 bezet is, kun je de werkbank op een andere poort starten met `--port 19455`.
+Open [de simulatorwerkbank](http://127.0.0.1:19450/) om een factory-bin te kiezen.
 
-| Netwerkproef | Gedrag |
-| --- | --- |
-| Wi-Fi | Provisioning via de firmware en controles op de Wi-Fi-webpoort. |
-| Ethernet | Virtuele kabel aangesloten bij boot. DHCP en HTTP lopen via de W5500. |
-| Ethernet → Wi-Fi | Wifi voorbereiden, Ethernet activeren, HTTP over Ethernet bevestigen, kabel lostrekken en automatisch Wi-Fi-herstel controleren. |
-
-Bij een schone flash kan de firmware haar installatieportaal op beide interfaces tonen. De runner vult daar de Wi-Fi-gegevens van de virtuele fixture in. De firmware kiest zelf de actieve route.
-
-De Wi-Fi-webpoort is standaard 19460. Ethernet gebruikt 19461 en UART1 gebruikt 19462. De poorten luisteren op loopback. De Ethernetfixture gebruikt libslirp met DHCP op een eigen virtueel subnet, een lokaal HTTP-forward, restricted mode en uitgeschakelde DNS. De Wi-Fi-route gebruikt het user-netwerk van esp-emu in restricted mode.
-
-## Uitvoeren zonder browser
-
-```sh
-python3 -m scripts.native_spi.run --firmware /pad/naar/q-duo.factory.bin --network ethernet --seconds 90
-python3 -m scripts.native_spi.run --firmware /pad/naar/q-duo.factory.bin --network failover --seconds 180
-```
-
-Kies een ander poortbereik met `--port-base 19600`. Elke run bewaart `report.json`, seriële uitvoer en native events onder `.tmp/native-spi/runs/`. Exitcode 0 betekent dat alle controles voor de gekozen proef zijn geslaagd. De failoverproef vereist ook Ethernet-HTTP, transportverlies na de virtuele kabelbreuk en een door de firmware gemelde terugval met herstelde HTTP-toegang via Wi-Fi.
+## Emulatorcode testen
 
 ```sh
 python3 -m unittest scripts.native_spi.test_tooling
