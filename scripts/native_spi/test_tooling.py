@@ -274,5 +274,102 @@ class EvidenceGates(unittest.TestCase):
                     self.assertFalse(qualify(report)[0][link])
                     evidence["last_ack_ms"] = previous
 
+
+class LowflowEvidence(unittest.TestCase):
+    @staticmethod
+    def write(when, register, values, *, unit=1, exception=0, dropped=False):
+        return {"unit": unit, "at_ms": when, "register": register, "values": values,
+                "exception": exception, "dropped": dropped}
+
+    def setUp(self):
+        self.dynamics = {
+            "unit": 1,
+            "checkpoints": {
+                "fault": {"guest_ms": 381000, "firmware": {"defrost": True, "frequency_hz": [26, 20]}},
+                "stopped": {"guest_ms": 393000, "firmware": {"defrost": True}},
+                "fault_held": {},
+                "restart": {},
+            },
+            "lowflow": {
+                "fault_event": {"uptime_s": 380}, "stop_event": {"uptime_s": 392},
+                "clear_window_ms": [501000, 503000],
+                "fault_elapsed_window_ms": [59000, 63000],
+                "recovery_elapsed_window_ms": [29000, 33000],
+            },
+        }
+        self.writes = [self.write(382000, 3999, [0]), self.write(383000, 1999, [0]),
+                       self.write(633000, 1999, [1]), self.write(633500, 1999, [1], unit=2)]
+
+    def gates(self):
+        from .lowflow import lowflow_gates
+
+        return {key: passed for key, (passed, _) in lowflow_gates(self.dynamics, self.writes).items()}
+
+    def test_stop_hold_and_automatic_restart(self):
+        self.assertTrue(all(self.gates().values()))
+
+    def test_stop_requires_both_acknowledged_registers_with_defrost_active(self):
+        self.writes[0]["exception"] = 4
+        self.assertFalse(self.gates()["lowflow_defrost_stop"])
+        self.writes[0]["exception"] = 0
+        self.dynamics["checkpoints"]["stopped"]["firmware"]["defrost"] = False
+        self.assertFalse(self.gates()["lowflow_defrost_stop"])
+
+    def test_multi_register_enable_to_either_unit_is_prohibited_while_latched(self):
+        self.writes.insert(2, self.write(400000, 3998, [0, 2], unit=2, dropped=True))
+        self.assertFalse(self.gates()["lowflow_held"])
+
+    def test_other_unit_cannot_restart_during_release_window_or_minimum_off_time(self):
+        for when, gate in ((502000, "lowflow_held"), (505000, "lowflow_restart")):
+            with self.subTest(when=when):
+                self.writes[-1]["at_ms"] = when
+                self.assertFalse(self.gates()[gate])
+
+    def test_restart_fails_during_minimum_off_time(self):
+        for when in (631000, 632998):
+            with self.subTest(when=when):
+                self.writes[-2]["at_ms"] = when
+                self.assertFalse(self.gates()["lowflow_restart"])
+
+    def test_defrost_feedback_cannot_delay_recording_an_early_fault_clear(self):
+        from .lowflow import Lowflow, matches_timer, RECOVER_MS
+
+        def sample(when, flow, fault):
+            return {
+                "observed_from_ms": when - 100, "guest_ms": when,
+                "firmware": {"ott_valid": True, "heat": True, "flow_lph": flow, "lowflow_fault": fault,
+                             "defrost": True, "valve": True, "frequency_hz": [0, 0]},
+                "odus": [{"requested_level": 0, "requested_mode": "standby", "frequency_hz": 0}] * 2,
+            }
+
+        scenario = Lowflow(None, None)
+        scenario.result["stage"] = "wait_clear"
+        scenario.previous = sample(100000, 0, True)
+        scenario.evidence["restore_ms"] = 100000
+        scenario.observe_flow(None, "wait_clear", sample(102000, 600, True), 0)
+        scenario.observe_flow(None, "wait_clear", sample(104000, 600, False), 0)
+
+        self.assertEqual(scenario.result["stage"], "wait_clear")
+        self.assertFalse(matches_timer(scenario.evidence["recovery_elapsed_window_ms"], RECOVER_MS))
+        running = sample(106000, 600, False)
+        running["firmware"]["frequency_hz"][0] = 26
+        with self.assertRaisesRegex(RuntimeError, "Een compressor kwam op gang"):
+            scenario.observe_flow(None, "wait_clear", running, 0)
+        with self.assertRaisesRegex(RuntimeError, "keerde terug"):
+            scenario.observe_flow(None, "wait_clear", sample(108000, 600, True), 0)
+        released = sample(136000, 600, False)
+        released["firmware"].update(defrost=False, valve=False)
+        scenario.observe_flow(None, "wait_clear", released, 0)
+        self.assertEqual(scenario.result["stage"], "wait_restart")
+        self.assertFalse(matches_timer(scenario.evidence["recovery_elapsed_window_ms"], RECOVER_MS))
+
+    def test_timer_intervals_reject_early_late_and_imprecise_measurements(self):
+        from .lowflow import matches_timer
+
+        for interval in ([52000, 59000], [67000, 68000], [60000, 59000], [53000, 66000]):
+            with self.subTest(interval=interval):
+                self.assertFalse(matches_timer(interval, 60000))
+
+
 if __name__ == "__main__":
     unittest.main()

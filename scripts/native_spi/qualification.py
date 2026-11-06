@@ -1,6 +1,7 @@
 """Explicit evidence gates for a complete bin-only compatibility run."""
 import signal
 
+from .lowflow import lowflow_gates
 from .network_probe import ETHERNET_IP
 
 
@@ -69,4 +70,6 @@ def qualify(report):
                 f"De {description} is onvolledig of stopte vóór het einde van de proef.",
             )
         gates["dynamics"] = (dynamics["stage"] == "complete", "De compressor-, flow- en defrostproef is onvolledig.")
+        if "lowflow" in dynamics:
+            gates.update(lowflow_gates(dynamics, report.get("writes", [])))
     return {key: bool(value[0]) for key, value in gates.items()}, [reason for ok, reason in gates.values() if not ok]

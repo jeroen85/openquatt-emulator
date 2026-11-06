@@ -28,6 +28,7 @@ from .atomic import atomic_json
 from .build import ensure, verify_original
 from .dynamics import Dynamics, wire_evidence
 from .factory import factory_info
+from .lowflow import Lowflow
 from .network_probe import MODES, NetworkProbe
 from .qualification import qualify
 from .transport import RtuPeer
@@ -100,10 +101,10 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Invalid local run name")
     if network not in MODES or (network != "wifi" and mode != "device"):
         raise ValueError("Ethernet requires the native device mode")
-    if scenario not in ("compatibility", "dynamics"):
+    if scenario not in ("compatibility", "dynamics", "lowflow"):
         raise ValueError("Invalid test scenario")
-    if scenario == "dynamics" and (mode != "device" or network == "failover"):
-        raise ValueError("Dynamics requires device mode on a stable Wi-Fi or Ethernet route")
+    if scenario != "compatibility" and (mode != "device" or network == "failover"):
+        raise ValueError("Dynamics and lowflow require device mode on a stable Wi-Fi or Ethernet route")
     if not 1024 <= base <= 65533:
         raise ValueError("Port base must be between 1024 and 65533")
 
@@ -170,9 +171,10 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     fleet = model.OduFleet(odu_library)
     peer = RtuPeer(fleet, guest_clock if mode == "device" else None)
     dynamics = None
-    if scenario == "dynamics":
+    if scenario != "compatibility":
         thermostat = out / "thermostat-heat"
-        dynamics = Dynamics(thermostat, fleet)
+        scenario_type = Lowflow if scenario == "lowflow" else Dynamics
+        dynamics = scenario_type(thermostat, fleet)
         dynamics.set_heat(False)
         env["OQ_NATIVE_OT_CONTROL"] = str(thermostat)
         report["dynamics"] = dynamics.result
@@ -468,8 +470,9 @@ if __name__ == "__main__":
     parser.add_argument("--name", default="factory")
     parser.add_argument("--temperature", type=float, default=30.0)
     parser.add_argument("--network", choices=MODES, default="wifi")
-    parser.add_argument("--scenario", choices=("compatibility", "dynamics"), default="compatibility")
+    parser.add_argument("--scenario", choices=("compatibility", "dynamics", "lowflow"), default="compatibility")
     args = parser.parse_args()
-    seconds = args.seconds if args.seconds is not None else (420 if args.scenario == "dynamics" else 90)
+    default_seconds = {"compatibility": 90, "dynamics": 420, "lowflow": 780}
+    seconds = args.seconds if args.seconds is not None else default_seconds[args.scenario]
     raise SystemExit(run(args.firmware, seconds, args.mode, args.port_base, args.name, args.temperature,
                          args.network, args.scenario))

@@ -139,7 +139,20 @@ De runner schakelt OpenTherm in via de gewone instellingen van de firmware en ki
 
 De proef begint met stilstand en nulflow. Daarna controleert hij de echte compressoropdracht en de gemeten frequentie, de gedeelde flow van de twee units in serie, de defroststatus en vierwegklep, en een korte flowonderbreking met herstel. De ODU-modelklok volgt de systeemtimer van de virtuele ESP32. De PT1000 behoudt in deze proef de ingestelde temperatuur.
 
-In `report.json` vind je de meetpunten onder `dynamics.checkpoints`, de bevestigde OpenTherm Data-ID's onder `dynamics.wire` en de klokstand onder `guest_uptime_ms` en `odu_uptime_ms`. De eindcontrole vereist recente voortgang van de ODU-klok en recente antwoorden op beide OpenTherm-aansluitingen. `mmio.jsonl` bevat de OpenTherm-frames met richting, RMT-kanaal en virtuele tijd. Een korte flowonderbreking beproeft de feedbackroute. Een aparte, langere proef is nodig om de volledige lowflowbeveiliging en haar hersteltimer te kwalificeren.
+In `report.json` vind je de meetpunten onder `dynamics.checkpoints`, de bevestigde OpenTherm Data-ID's onder `dynamics.wire` en de klokstand onder `guest_uptime_ms` en `odu_uptime_ms`. De eindcontrole vereist recente voortgang van de ODU-klok en recente antwoorden op beide OpenTherm-aansluitingen. `mmio.jsonl` bevat de OpenTherm-frames met richting, RMT-kanaal en virtuele tijd.
+
+### Flowverlies tijdens defrost, vrijgave en herstart
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network ethernet --scenario lowflow --name q-duo-lowflow
+```
+
+Deze proef duurt standaard 13 minuten. Zodra de firmware een draaiende compressor, defrost en de vierwegklep bevestigt, simuleert de runner een blokkade in de gedeelde leiding. De thermostaat blijft warmte vragen. De runner houdt de defroststatus van de buitenunit actief totdat de firmware een stop heeft bevestigd. Daarna houdt hij de leiding nog minstens 65 seconden geblokkeerd, herstelt de flow en wacht op een automatische herstart.
+
+De controles volgen de ingebouwde tijden van de Q Duo-firmware van OpenQuatt-revisie `31282d13`. Bij minder dan `400 L/h` verwacht de proef de lowflowfout na `60 s`. Bij herstelde flow verwacht hij vrijgave na `30 s`. De beveiliging evalueert de flow elke `5 s`. Een draaiende compressor moet na een bevestigde stop minstens `240 s` uit blijven, ook als de flow eerder is hersteld. Voor de unit in defrost meet de runner die tijd vanaf haar stopmelding. Voor de andere unit gebruikt hij het meetpunt waarop beide compressoren stilstonden. Firmware met een ander beleid vereist bijbehorende verwachtingen in `scripts/native_spi/lowflow.py`.
+
+In `report.json` staan de flowdrempel, fout, stop, vrijgave en herstart onder `dynamics.checkpoints`. `dynamics.lowflow` bevat de tijdvensters in milliseconden op de ESP32-klok, de gebeurtenissen uit het firmwarelogboek en de Modbus-opdrachten voor stop en herstart. Een tijdvenster houdt rekening met de tijd tussen twee metingen. Controleer `qualification.lowflow_*` en lees bij een afwijking de bijbehorende `failure_reasons`.
 
 ## 5. Het resultaat lezen
 

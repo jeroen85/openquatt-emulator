@@ -72,6 +72,7 @@ class Dynamics:
         return not self.settings_pending
 
     def sample(self, get):
+        observed_from_ms = self.fleet.now_ms
         unit_number = self.result["unit"]
         firmware = {
             "ott_valid": value(get, "binary_sensor", "OT - Thermostat Status Valid"),
@@ -94,10 +95,11 @@ class Dynamics:
         with self.fleet.lock:
             model = [
                 {key: unit[key] for key in ("address", "flow_lph", "frequency_hz", "requested_level",
-                                           "inlet_c", "outlet_c", "defrost")}
+                                           "inlet_c", "outlet_c", "defrost", "requested_mode")}
                 for unit in self.fleet.snapshot()
             ]
-            return {"guest_ms": self.fleet.now_ms, "firmware": firmware, "odus": model}
+            return {"observed_from_ms": observed_from_ms, "guest_ms": self.fleet.now_ms,
+                    "firmware": firmware, "odus": model}
 
     @staticmethod
     def heating(sample, index):
@@ -153,10 +155,18 @@ class Dynamics:
             if (firmware["defrost"] is True and firmware["valve"] is True
                     and sample["odus"][index]["defrost"] and self.has_flow(sample)):
                 points["defrost"] = sample
-                self.fleet.set_odu({"index": index, "defrost": False})
-                self.fleet.set_odu({"index": index, "no_flow": True})
-                self.result["stage"] = "flow_loss"
-        elif stage == "flow_loss":
+                self.cut_flow(index)
+        else:
+            self.observe_flow(get, stage, sample, index)
+
+    def cut_flow(self, index):
+        self.fleet.set_odu({"index": index, "defrost": False, "no_flow": True})
+        self.result["stage"] = "flow_loss"
+
+    def observe_flow(self, get, stage, sample, index):
+        firmware = sample["firmware"]
+        points = self.result["checkpoints"]
+        if stage == "flow_loss":
             if (self.no_flow(sample) and firmware["defrost"] is False
                     and firmware["valve"] is False and not sample["odus"][index]["defrost"]):
                 points["flow_loss"] = sample
