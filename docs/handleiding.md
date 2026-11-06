@@ -178,6 +178,20 @@ Onder `memory.samples` staan de waarden in bytes per meetpunt. `memory.phases` t
 
 De recorderdownload krijgt maximaal acht seconden, binnen de ingestelde testduur. Bij een timeout sluit de runner de verbinding en vermeldt `failure_reasons` dat de opname onvolledig is.
 
+### Een nieuwe Q Duo-build vergelijken
+
+Geef de factory-bin van de kandidaat en een geslaagd `report.json` van een geheugenproef op.
+
+```sh
+oq_reference="/pad/naar/referentierun/report.json"
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --memory-baseline "$oq_reference" --name q-duo-candidate
+```
+
+De runner neemt het scenario, de netwerkroute, de duur en de temperatuur uit het referentierapport over. Hij weigert afwijkende instellingen of een andere emulator, buitenunitmodel of meetfixture. Bewaar het originele referentierapport. In `memory_comparison` staan de hash van dat rapport, beide firmwarehashes en per fase de meetwaarden, het verschil in bytes en het aantal meetpunten. Een negatief verschil betekent dat de kandidaat minder vrij geheugen liet zien. De meetvensters kunnen per firmware verschillen doordat opstarten en andere faseovergangen op andere tijdstippen plaatsvinden.
+
+Met `--memory-max-drop-bytes 4096` geef je bijvoorbeeld per waarde en per fase een daling van maximaal 4096 bytes ruimte. Bij een grotere daling krijgt de vergelijking de status `regression` en geeft de runner een niet-nul exitcode. Zonder die optie rapporteert de runner de verschillen zonder geheugenbudget. Alleen volledig gekwalificeerde runs leveren vergelijkbare meetwaarden op.
+
 ## 5. Het resultaat lezen
 
 Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde map onder `.tmp/native-spi/runs/`. De status `PASS_NATIVE_EXTENSION` hoort bij een volledig geslaagde proef. Bij `NOT_QUALIFIED` geven `failure_reasons` en `qualification` aan welke controles ontbreken of faalden. Bij `STOPPED` is de proef voortijdig gestopt.

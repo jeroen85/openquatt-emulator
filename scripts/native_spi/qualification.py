@@ -77,4 +77,9 @@ def qualify(report):
         gaps = [name for name, phase in memory.get("phases", {}).items() if not phase["covered"]]
         reason = f"Onvoldoende heapmetingen voor {', '.join(gaps)}." if gaps else "De heapmeting is onvolledig."
         gates["memory"] = (memory.get("complete") is True, memory.get("error", reason))
+    if "memory_comparison" in report:
+        comparison = report["memory_comparison"]
+        gates["memory_comparison"] = (
+            comparison["status"] == "compared", comparison.get("reason", "De geheugenvergelijking is onvolledig."),
+        )
     return {key: bool(value[0]) for key, value in gates.items()}, [reason for ok, reason in gates.values() if not ok]

@@ -31,6 +31,7 @@ from .dynamics import Dynamics, wire_evidence
 from .factory import factory_info
 from .lowflow import Lowflow
 from .memory import RECORDING_PATH, SAMPLE_SLACK_MS, lowflow_windows, normal_windows, summarize
+from .memory_comparison import compare, read_reference, require_match, runtime_fingerprint, settings
 from .network_probe import MODES, NetworkProbe
 from .qualification import qualify
 from .transport import RtuPeer
@@ -139,7 +140,17 @@ def wait_for_owned_listeners(process, ports):
 
 
 def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0,
-        network="wifi", scenario="compatibility", measure_memory=False):
+        network="wifi", scenario="compatibility", measure_memory=False, *,
+        memory_reference=None, memory_max_drop_bytes=None):
+    if memory_max_drop_bytes is not None and (
+            memory_reference is None or type(memory_max_drop_bytes) is not int or memory_max_drop_bytes < 0):
+        raise ValueError("--memory-max-drop-bytes vereist een referentie en een geheel getal van nul of hoger")
+    if memory_reference is not None:
+        measure_memory = True
+        require_match(settings(memory_reference["report"]), {
+            "scenario": scenario, "mode": mode, "network": network,
+            "duration_s": seconds, "fixture_temperature_c": temperature,
+        })
     if not 5 <= seconds <= 1800:
         raise ValueError("Duration must be 5..1800 host seconds")
     if not 0 <= temperature <= 100:
@@ -162,10 +173,12 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
     if network != "wifi":
         ports["ethernet"] = base + 1
     with reserve_ports(ports):
-        return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory)
+        return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
+                         memory_reference, memory_max_drop_bytes)
 
 
-def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory):
+def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
+              memory_reference, memory_max_drop_bytes):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -182,7 +195,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         verify_original(executable)
         extension = None
     report = {
-        "schema": 2, "input": info, "mode": mode, "fixture_temperature_c": temperature,
+        "schema": 2, "input": info, "mode": mode, "scenario": scenario, "fixture_temperature_c": temperature,
         "duration_s": seconds, "status": "RUNNING", "firmware_elf_used": False,
         "debugger_used": False, "firmware_modified": False, "ports": ports,
         "http": [], "errors": [], "panics": [], "modbus_timing_warnings": [], "setup_complete": False,
@@ -190,6 +203,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "native_build": native_build, "extension_sha256": sha(extension) if extension else None,
         "executable_sha256": sha(executable), "odu_library_sha256": sha(odu_library), "network": probe.result,
     }
+    if memory_reference is not None:
+        require_match(runtime_fingerprint(memory_reference["report"]), runtime_fingerprint(report))
     if measure_memory:
         report["memory"] = {"complete": False, "error": "Geen heapopname ontvangen."}
         if scenario == "compatibility":
@@ -536,18 +551,26 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         if _cancel_requested:
             report["cancelled"] = True
         report["qualification"], report["failure_reasons"] = qualify(report)
+        if memory_reference is not None:
+            report["memory_comparison"] = compare(
+                memory_reference, report, memory_max_drop_bytes, all(report["qualification"].values()),
+            )
+            report["qualification"], report["failure_reasons"] = qualify(report)
         accepted = all(report["qualification"].values())
         report["status"] = "PASS_NATIVE_EXTENSION" if accepted else "NOT_QUALIFIED"
         if report.get("cancelled"):
             report["status"] = "STOPPED"
         atomic_json(out / "report.json", report)
         publish_live()
-        print(json.dumps({
+        result = {
             "status": report["status"], "run": str(out), "setup": report["setup_complete"],
             "web": report.get("web_checks", 0), "pt1000": report.get("pt1000_value_c"),
             "requests": report["peer"]["requests"], "responses": report["peer"]["responses"],
             "panics": len(report["panics"]), "errors": report["errors"], "cleanup": report["cleanup"],
-        }), flush=True)
+        }
+        if memory_reference is not None:
+            result["memory_comparison"] = report["memory_comparison"]["status"]
+        print(json.dumps(result), flush=True)
     return 0 if accepted else 1
 
 
@@ -561,15 +584,27 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--firmware", type=Path, required=True)
     parser.add_argument("--seconds", type=int)
-    parser.add_argument("--mode", choices=("baseline", "trace", "device"), default="device")
+    parser.add_argument("--mode", choices=("baseline", "trace", "device"))
     parser.add_argument("--port-base", type=int, default=19460)
     parser.add_argument("--name", default="factory")
-    parser.add_argument("--temperature", type=float, default=30.0)
-    parser.add_argument("--network", choices=MODES, default="wifi")
-    parser.add_argument("--scenario", choices=("compatibility", "dynamics", "lowflow"), default="compatibility")
+    parser.add_argument("--temperature", type=float)
+    parser.add_argument("--network", choices=MODES)
+    parser.add_argument("--scenario", choices=("compatibility", "dynamics", "lowflow"))
     parser.add_argument("--memory", action="store_true", help="Read stock internal heap samples during compatibility or lowflow")
+    parser.add_argument("--memory-baseline", type=Path, help="Compare the heap run with a qualified report.json")
+    parser.add_argument("--memory-max-drop-bytes", type=int, help="Fail when any heap metric drops more than this many bytes")
     args = parser.parse_args()
-    default_seconds = {"compatibility": 90, "dynamics": 420, "lowflow": 780}
-    seconds = args.seconds if args.seconds is not None else default_seconds[args.scenario]
-    raise SystemExit(run(args.firmware, seconds, args.mode, args.port_base, args.name, args.temperature,
-                         args.network, args.scenario, args.memory))
+    try:
+        reference = read_reference(args.memory_baseline) if args.memory_baseline is not None else None
+        defaults = settings(reference["report"]) if reference else {}
+        scenario = args.scenario or defaults.get("scenario", "compatibility")
+        default_seconds = {"compatibility": 90, "dynamics": 420, "lowflow": 780}
+        seconds = args.seconds if args.seconds is not None else defaults.get("duration_s", default_seconds[scenario])
+        raise SystemExit(run(
+            args.firmware, seconds, args.mode or defaults.get("mode", "device"), args.port_base, args.name,
+            args.temperature if args.temperature is not None else defaults.get("fixture_temperature_c", 30.0),
+            args.network or defaults.get("network", "wifi"), scenario, args.memory,
+            memory_reference=reference, memory_max_drop_bytes=args.memory_max_drop_bytes,
+        ))
+    except ValueError as exc:
+        parser.error(str(exc))

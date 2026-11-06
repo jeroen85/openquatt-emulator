@@ -522,5 +522,64 @@ class MemoryEvidence(unittest.TestCase):
                 changes.pop()
 
 
+class MemoryComparison(unittest.TestCase):
+    def setUp(self):
+        phase = {
+            "covered": True, "window_ms": [0, 20000], "sample_count": 2,
+            "lowest_free_heap_b": 90000, "heapmin_at_last_sample_b": 40000,
+            "lowest_largest_block_b": 50000,
+        }
+        baseline = {
+            "input": {"sha256": "a" * 64}, "mode": "device", "network": {"mode": "ethernet"},
+            "duration_s": 90, "fixture_temperature_c": 30,
+            "memory": {
+                "complete": True, "interval_ms": 10000, "source": "openquatt_debug_recorder",
+                "capabilities": "MALLOC_CAP_INTERNAL",
+                "phases": {"startup": phase, "normal": {**phase, "window_ms": [20000, 75000]}},
+            },
+        }
+        self.reference = {"report": baseline, "report_sha256": "b" * 64}
+        self.candidate = json.loads(json.dumps(baseline))
+        self.candidate["input"]["sha256"] = "c" * 64
+        self.candidate["memory"]["phases"]["normal"]["lowest_free_heap_b"] = 88000
+        self.candidate["memory"]["phases"]["normal"]["lowest_largest_block_b"] = 52000
+
+    def test_comparison_reports_signed_deltas_and_honours_the_inclusive_drop_limit(self):
+        from .memory_comparison import compare
+        from .qualification import qualify
+
+        for limit, status in ((None, "compared"), (2000, "compared"), (1999, "regression")):
+            with self.subTest(limit=limit):
+                result = compare(self.reference, self.candidate, limit, qualified=True)
+                self.assertEqual(result["status"], status)
+                self.assertEqual(result["candidate_firmware_sha256"], "c" * 64)
+                metrics = result["phases"]["normal"]["metrics"]
+                self.assertEqual(metrics["lowest_free_heap_b"], {"reference_b": 90000, "candidate_b": 88000, "delta_b": -2000})
+                self.assertEqual(metrics["lowest_largest_block_b"]["delta_b"], 2000)
+                report = {**EvidenceGates().good(), "memory_comparison": result}
+                self.assertEqual(qualify(report)[0]["memory_comparison"], status == "compared")
+
+    def test_unqualified_candidate_does_not_produce_deltas(self):
+        from .memory_comparison import compare
+
+        result = compare(self.reference, self.candidate, 0, qualified=False)
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["phases"], {})
+
+    def test_incompatible_settings_and_unqualified_reference_are_rejected(self):
+        from .memory_comparison import read_reference, require_match, settings
+
+        self.candidate["network"]["mode"] = "wifi"
+        with self.assertRaisesRegex(ValueError, "network"):
+            require_match(settings(self.reference["report"]), settings(self.candidate))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            report = {**self.reference["report"], "schema": 2, "status": "NOT_QUALIFIED",
+                      "qualification": {"memory": False}}
+            path.write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "geslaagd geheugenrapport"):
+                read_reference(path)
+
+
 if __name__ == "__main__":
     unittest.main()
