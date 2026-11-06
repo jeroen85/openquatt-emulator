@@ -122,9 +122,31 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
 - `--seconds` bepaalt de meetduur in seconden op de host. Voor een volledige proef zijn de bovenstaande tijden een bruikbaar begin. De eerste build van de hostuitbreiding gebeurt vóór die meetduur.
 - `--temperature` stelt de PT1000-fixture in. Gebruik een punt bij decimalen, bijvoorbeeld `30.5`.
 - `--name` is het herkenbare voorvoegsel van de rapportmap. Gebruik letters, cijfers, underscores of koppeltekens en begin met een letter of cijfer.
-- `--port-base 19600` geeft Wi-Fi poort `19600`, Ethernet zo nodig `19601` en UART1 `19602`. Kies verschillende, niet-overlappende reeksen als je twee CLI-proeven naast elkaar draait. De werkbank ondersteunt één actieve proef en gebruikt haar eigen vaste testpoorten. Met `python3 -m scripts.native_spi.server --port 19455` wijzig je uitsluitend de poort van het bedienpaneel.
+- `--port-base 19600` geeft Wi-Fi poort `19600`, Ethernet zo nodig `19601` en UART1 `19602`.
 
 De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat alle controles van de gekozen proef geslaagd zijn. Elke andere exitcode betekent dat de proef is afgebroken, een controle faalde of de runner niet kon starten. Voor een geautomatiseerde proef geef je de gewenste factory-bin door aan dezelfde CLI op een macOS-arm64-runner. Gebruik de exitcode en bewaar het rapport van die specifieke proef.
+
+### Meerdere proeven tegelijk
+
+Start elke functionele CLI-proef in een eigen terminal met een eigen poortreeks en naam. Elke run krijgt een eigen emulatorproces, flashkopie en rapportmap.
+
+Start bijvoorbeeld in terminal 1 een rooktest op `19600–19602`.
+
+```sh
+python3 -m scripts.native_spi.run --firmware "/pad/naar/eerste-q-duo.factory.bin" \
+  --network wifi --port-base 19600 --name rooktest-a
+```
+
+Start tegelijk in terminal 2 een tweede rooktest op `19604–19606`.
+
+```sh
+python3 -m scripts.native_spi.run --firmware "/pad/naar/tweede-q-duo.factory.bin" \
+  --network wifi --port-base 19604 --name rooktest-b
+```
+
+Open per terminal het `report.json` in de map die de eigen CLI als `run` meldt. De werkbank ondersteunt één actieve proef op haar vaste testpoorten `19460–19462`. Met `python3 -m scripts.native_spi.server --port 19455` wijzig je de poort van het bedienpaneel.
+
+Draai de baseline en kandidaat voor een geheugenvergelijking achter elkaar op dezelfde Mac. Houd andere emulatorruns buiten het meetvenster om de hostbelasting vergelijkbaar te houden.
 
 ### Compressor, flow en defrost met OpenTherm
 
