@@ -72,4 +72,9 @@ def qualify(report):
         gates["dynamics"] = (dynamics["stage"] == "complete", "De compressor-, flow- en defrostproef is onvolledig.")
         if "lowflow" in dynamics:
             gates.update(lowflow_gates(dynamics, report.get("writes", [])))
+    if "memory" in report:
+        memory = report["memory"]
+        gaps = [name for name, phase in memory.get("phases", {}).items() if not phase["covered"]]
+        reason = f"Onvoldoende heapmetingen voor {', '.join(gaps)}." if gaps else "De heapmeting is onvolledig."
+        gates["memory"] = (memory.get("complete") is True, memory.get("error", reason))
     return {key: bool(value[0]) for key, value in gates.items()}, [reason for ok, reason in gates.values() if not ok]

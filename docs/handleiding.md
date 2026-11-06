@@ -154,6 +154,19 @@ De controles volgen de ingebouwde tijden van de Q Duo-firmware van OpenQuatt-rev
 
 In `report.json` staan de flowdrempel, fout, stop, vrijgave en herstart onder `dynamics.checkpoints`. `dynamics.lowflow` bevat de tijdvensters in milliseconden op de ESP32-klok, de gebeurtenissen uit het firmwarelogboek en de Modbus-opdrachten voor stop en herstart. Een tijdvenster houdt rekening met de tijd tussen twee metingen. Controleer `qualification.lowflow_*` en lees bij een afwijking de bijbehorende `failure_reasons`.
 
+### Interne heap tijdens de lowflowproef
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network ethernet --scenario lowflow --memory --name q-duo-lowflow-memory
+```
+
+De ongewijzigde Q Duo-bin legt de vrije interne heap, heapmin en het grootste vrije interne blok vast via de ingebouwde systeemrecorder. Deze recorder gebruikt `MALLOC_CAP_INTERNAL` en meet elke 10 seconden op de ESP32-klok. De runner leest de opname via loopback nadat de herstartfase is gemeten.
+
+Onder `memory.samples` staan de waarden in bytes per meetpunt. `memory.phases` vat de boot tot de eerste bevestigde standby, de actieve defrost tot de lowflowfout, het flowherstel tot de vrijgave en de eerste 30 seconden na de bevestigde herstart apart samen. In de defrostfase laat de proef ook de flow wegvallen. Per fase toont het rapport de laagste bemonsterde vrije heap, het kleinste bemonsterde grootste vrije blok en heapmin bij de laatste meting. Heapmin is de ESP-IDF-watermark sinds boot en draagt eerdere dips mee. Korte dips in de actuele vrije heap of blokgrootte kunnen tussen meetpunten vallen.
+
+`qualification.memory` vereist een meetinterval van 10 seconden en voldoende dekking in alle fasen. Vergelijk firmwarebuilds met dezelfde netwerkroute, emulatorversie en instellingen. Gebruik de waarden voor regressievergelijking onder deze virtuele belasting.
+
 ## 5. Het resultaat lezen
 
 Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde map onder `.tmp/native-spi/runs/`. De status `PASS_NATIVE_EXTENSION` hoort bij een volledig geslaagde proef. Bij `NOT_QUALIFIED` geven `failure_reasons` en `qualification` aan welke controles ontbreken of faalden. Bij `STOPPED` is de proef voortijdig gestopt.
@@ -189,4 +202,4 @@ Voor de hersteltijd trek je `network.cable_cut_s` af van `network.wifi_restored_
 
 De compatibiliteitsproeven dekken boot, webtoegang, de gemodelleerde PT1000, Modbus-registerverkeer met twee buitenunits en de gekozen netwerkroute. De dynamische proef voegt digitaal OpenTherm, compressorfeedback, flow en defrost toe. Gebruik fysieke HIL voor elektrische I/O, de werkelijke OpenTherm-signalen, externe flow- en PWM-signalen en de timing en veiligheidsmarges van de fysieke installatie.
 
-De standaardrapporten bevatten geen heapmetingen. Een aparte virtuele geheugenproef kan met vergelijkbare belasting en firmwaretelemetrie verschillen tussen builds zichtbaar maken. Valideer de werkelijke marges voor interne DRAM, het grootste vrije blok, DMA en taakstacks op de fysieke controller onder representatieve belasting.
+Valideer de werkelijke marges voor interne DRAM, het grootste vrije blok, DMA en taakstacks op de fysieke controller onder representatieve belasting.

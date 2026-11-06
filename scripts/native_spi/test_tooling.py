@@ -371,5 +371,76 @@ class LowflowEvidence(unittest.TestCase):
                 self.assertFalse(matches_timer(interval, 60000))
 
 
+class MemoryEvidence(unittest.TestCase):
+    def setUp(self):
+        from .memory import FIELDS
+
+        self.recording = {
+            "format": "openquatt-debug-device-v1", "encoding": "device-psram-delta-json-v1",
+            "columns": list(FIELDS), "units": [[index, unit] for index, (_, unit) in enumerate(FIELDS.values())],
+            "initial": [[0, 1000], [1, 100000], [2, 40000], [3, 50000]],
+            "recording": {"interval_s": 10, "sample_count": 15, "active": True},
+            "samples": [[0, []]] + [[i * 10, [[0, i * 10000 + 1000]]] for i in range(1, 15)],
+        }
+        self.recording["samples"][4][1].extend([[1, 90000], [2, 35000], [3, 45000]])
+        self.dynamics = {
+            "checkpoints": {
+                "standby": {"observed_from_ms": 25000},
+                "defrost": {"guest_ms": 30000},
+                "restart": {"guest_ms": 110000},
+            },
+            "lowflow": {"fault_event": {"uptime_s": 64}, "restore_ms": 70000, "clear_window_ms": [104000, 106000]},
+        }
+
+    def summarize(self, guest_ms=142000):
+        from .memory import summarize
+
+        return summarize(self.recording, self.dynamics, guest_ms)
+
+    def test_phase_summaries_decode_deltas_and_keep_the_since_boot_watermark(self):
+        result = self.summarize()
+        self.assertTrue(result["complete"])
+        startup, defrost, recovery, restart = result["phases"].values()
+        self.assertEqual([row["sample_count"] for row in (startup, defrost, recovery, restart)], [3, 4, 4, 3])
+        self.assertEqual(startup["heapmin_at_last_sample_b"], 40000)
+        self.assertEqual(defrost["lowest_free_heap_b"], 90000)
+        self.assertEqual(recovery["lowest_largest_block_b"], 45000)
+        self.assertEqual(restart["heapmin_at_last_sample_b"], 35000)
+
+    def test_missing_measurements_inside_recovery_prevent_qualification(self):
+        self.recording["samples"].pop(8)
+        self.recording["recording"]["sample_count"] -= 1
+        result = self.summarize()
+        self.assertFalse(result["phases"]["lowflow_recovery"]["covered"])
+        from .qualification import qualify
+
+        report = EvidenceGates().good()
+        report["memory"] = result
+        self.assertFalse(qualify(report)[0]["memory"])
+
+    def test_missing_heap_field_or_invalid_clock_cannot_supply_evidence(self):
+        with self.assertRaisesRegex(ValueError, "firmwareklok"):
+            self.summarize(160000)
+        self.recording["initial"].pop()
+        with self.assertRaisesRegex(ValueError, "onvolledig"):
+            self.summarize()
+
+    def test_slower_recorder_cadence_cannot_supply_comparable_evidence(self):
+        self.recording["recording"]["interval_s"] = 20
+        self.recording["samples"] = self.recording["samples"][::2]
+        self.recording["recording"]["sample_count"] = len(self.recording["samples"])
+        with self.assertRaisesRegex(ValueError, "elke 10 seconden"):
+            self.summarize()
+
+    def test_invalid_value_or_watermark_is_rejected(self):
+        changes = self.recording["samples"][8][1]
+        for value in (True, None, 40000):
+            with self.subTest(value=value):
+                changes.append([2, value])
+                with self.assertRaises(ValueError):
+                    self.summarize()
+                changes.pop()
+
+
 if __name__ == "__main__":
     unittest.main()

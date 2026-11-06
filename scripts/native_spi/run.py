@@ -29,6 +29,7 @@ from .build import ensure, verify_original
 from .dynamics import Dynamics, wire_evidence
 from .factory import factory_info
 from .lowflow import Lowflow
+from .memory import RECORDING_PATH, RESTART_WINDOW_MS, SAMPLE_SLACK_MS, summarize
 from .network_probe import MODES, NetworkProbe
 from .qualification import qualify
 from .transport import RtuPeer
@@ -92,7 +93,8 @@ def wait_for_owned_listeners(process, ports):
     raise RuntimeError("The owned emulator did not open all loopback listeners")
 
 
-def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0, network="wifi", scenario="compatibility"):
+def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0,
+        network="wifi", scenario="compatibility", measure_memory=False):
     if not 5 <= seconds <= 1800:
         raise ValueError("Duration must be 5..1800 host seconds")
     if not 0 <= temperature <= 100:
@@ -105,6 +107,8 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Invalid test scenario")
     if scenario != "compatibility" and (mode != "device" or network == "failover"):
         raise ValueError("Dynamics and lowflow require device mode on a stable Wi-Fi or Ethernet route")
+    if measure_memory and scenario != "lowflow":
+        raise ValueError("--memory requires --scenario lowflow")
     if not 1024 <= base <= 65533:
         raise ValueError("Port base must be between 1024 and 65533")
 
@@ -113,10 +117,10 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
     if network != "wifi":
         ports["ethernet"] = base + 1
     with reserve_ports(ports):
-        return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario)
+        return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory)
 
 
-def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario):
+def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -141,6 +145,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "native_build": native_build, "extension_sha256": sha(extension) if extension else None,
         "executable_sha256": sha(executable), "odu_library_sha256": sha(odu_library), "network": probe.result,
     }
+    if measure_memory:
+        report["memory"] = {"complete": False, "error": "Geen heapopname ontvangen."}
     command = [
         str(executable), "--chip", "esp32s3", "--firmware", str(flash), "--psram-size", "8M",
         "--wifi-ssid", "OpenQuatt-Native-Probe", "--wifi-password", "native-probe-only",
@@ -287,6 +293,24 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             return None
 
     verified_asset_ports = set()
+    memory_requested = False
+
+    def inspect_memory(port):
+        nonlocal memory_requested
+        if memory_requested or dynamics.result["stage"] != "complete":
+            return
+        restart_ms = dynamics.result["checkpoints"]["restart"]["guest_ms"]
+        if guest_clock() < restart_ms + RESTART_WINDOW_MS + SAMPLE_SLACK_MS:
+            return
+        memory_requested = True
+        data = get(RECORDING_PATH, timeout=8, port=port)
+        if not data:
+            report["memory"]["error"] = "De ingebouwde systeemrecorder gaf geen opname terug."
+            return
+        try:
+            report["memory"] = summarize(json.loads(data), dynamics.result, guest_clock())
+        except (KeyError, TypeError, ValueError) as exc:
+            report["memory"]["error"] = str(exc)
 
     def inspect_web():
         probe.verify_cut(get)
@@ -326,6 +350,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             report["web_port"] = port
             if dynamics:
                 dynamics.observe(get)
+            if measure_memory:
+                inspect_memory(port)
 
     try:
         process = subprocess.Popen(
@@ -471,8 +497,9 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=30.0)
     parser.add_argument("--network", choices=MODES, default="wifi")
     parser.add_argument("--scenario", choices=("compatibility", "dynamics", "lowflow"), default="compatibility")
+    parser.add_argument("--memory", action="store_true", help="Read stock internal heap samples during the lowflow scenario")
     args = parser.parse_args()
     default_seconds = {"compatibility": 90, "dynamics": 420, "lowflow": 780}
     seconds = args.seconds if args.seconds is not None else default_seconds[args.scenario]
     raise SystemExit(run(args.firmware, seconds, args.mode, args.port_base, args.name, args.temperature,
-                         args.network, args.scenario))
+                         args.network, args.scenario, args.memory))
