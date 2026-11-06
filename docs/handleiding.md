@@ -126,6 +126,21 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
 
 De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat alle controles van de gekozen proef geslaagd zijn. Elke andere exitcode betekent dat de proef is afgebroken, een controle faalde of de runner niet kon starten. Voor een geautomatiseerde proef geef je de gewenste factory-bin door aan dezelfde CLI op een macOS-arm64-runner. Gebruik de exitcode en bewaar het rapport van die specifieke proef.
 
+### Compressor, flow en defrost met OpenTherm
+
+Start de dynamische proef met dezelfde Q Duo-factory-bin. Kies een stabiele Wi-Fi- of Ethernet-route. De standaardduur voor dit scenario is zeven minuten. Bij de geteste firmware kan de eerste compressorstart maximaal 240 seconden geblokkeerd blijven vanaf bevestigde stilstand. De proef gebruikt de ingebouwde productietimers.
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network wifi --scenario dynamics --name q-duo-dynamics
+```
+
+De runner schakelt OpenTherm in via de gewone instellingen van de firmware en kiest flow uit de buitenunits. Een virtuele thermostaat stuurt warmtevraag, kamertemperatuur en setpoint via OTT. Tegelijk beantwoordt een virtuele ketel de OpenTherm-verzoeken op OTB. De peers leveren digitale Manchester-pulsen aan de RMT-ontvanger. De productiedrivers van de gekozen bin verwerken de frames.
+
+De proef begint met stilstand en nulflow. Daarna controleert hij de echte compressoropdracht en de gemeten frequentie, de gedeelde flow van de twee units in serie, de defroststatus en vierwegklep, en een korte flowonderbreking met herstel. De ODU-modelklok volgt de systeemtimer van de virtuele ESP32. De PT1000 behoudt in deze proef de ingestelde temperatuur.
+
+In `report.json` vind je de meetpunten onder `dynamics.checkpoints`, de bevestigde OpenTherm Data-ID's onder `dynamics.wire` en de klokstand onder `guest_uptime_ms` en `odu_uptime_ms`. De eindcontrole vereist recente voortgang van de ODU-klok en recente antwoorden op beide OpenTherm-aansluitingen. `mmio.jsonl` bevat de OpenTherm-frames met richting, RMT-kanaal en virtuele tijd. Een korte flowonderbreking beproeft de feedbackroute. Een aparte, langere proef is nodig om de volledige lowflowbeveiliging en haar hersteltimer te kwalificeren.
+
 ## 5. Het resultaat lezen
 
 Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde map onder `.tmp/native-spi/runs/`. De status `PASS_NATIVE_EXTENSION` hoort bij een volledig geslaagde proef. Bij `NOT_QUALIFIED` geven `failure_reasons` en `qualification` aan welke controles ontbreken of faalden. Bij `STOPPED` is de proef voortijdig gestopt.
@@ -159,6 +174,6 @@ Voor de hersteltijd trek je `network.cable_cut_s` af van `network.wifi_restored_
 
 ## 7. Wanneer fysieke HIL nodig blijft
 
-Deze standaardproeven dekken boot, webtoegang, de gemodelleerde PT1000, Modbus-registerverkeer met twee buitenunits en de gekozen netwerkroute. Gebruik fysieke HIL voor elektrische I/O, de werkelijke OpenTherm-signalen, externe flow- en PWM-signalen en de timing en veiligheidsmarges van de fysieke installatie.
+De compatibiliteitsproeven dekken boot, webtoegang, de gemodelleerde PT1000, Modbus-registerverkeer met twee buitenunits en de gekozen netwerkroute. De dynamische proef voegt digitaal OpenTherm, compressorfeedback, flow en defrost toe. Gebruik fysieke HIL voor elektrische I/O, de werkelijke OpenTherm-signalen, externe flow- en PWM-signalen en de timing en veiligheidsmarges van de fysieke installatie.
 
 De standaardrapporten bevatten geen heapmetingen. Een aparte virtuele geheugenproef kan met vergelijkbare belasting en firmwaretelemetrie verschillen tussen builds zichtbaar maken. Valideer de werkelijke marges voor interne DRAM, het grootste vrije blok, DMA en taakstacks op de fysieke controller onder representatieve belasting.

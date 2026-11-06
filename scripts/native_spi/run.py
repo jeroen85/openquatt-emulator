@@ -15,6 +15,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import struct
 import threading
 import time
 import urllib.error
@@ -25,6 +26,7 @@ import uuid
 from . import model
 from .atomic import atomic_json
 from .build import ensure, verify_original
+from .dynamics import Dynamics, wire_evidence
 from .factory import factory_info
 from .network_probe import MODES, NetworkProbe
 from .qualification import qualify
@@ -89,7 +91,7 @@ def wait_for_owned_listeners(process, ports):
     raise RuntimeError("The owned emulator did not open all loopback listeners")
 
 
-def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0, network="wifi"):
+def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0, network="wifi", scenario="compatibility"):
     if not 5 <= seconds <= 1800:
         raise ValueError("Duration must be 5..1800 host seconds")
     if not 0 <= temperature <= 100:
@@ -98,6 +100,10 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Invalid local run name")
     if network not in MODES or (network != "wifi" and mode != "device"):
         raise ValueError("Ethernet requires the native device mode")
+    if scenario not in ("compatibility", "dynamics"):
+        raise ValueError("Invalid test scenario")
+    if scenario == "dynamics" and (mode != "device" or network == "failover"):
+        raise ValueError("Dynamics requires device mode on a stable Wi-Fi or Ethernet route")
     if not 1024 <= base <= 65533:
         raise ValueError("Port base must be between 1024 and 65533")
 
@@ -106,10 +112,10 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
     if network != "wifi":
         ports["ethernet"] = base + 1
     with reserve_ports(ports):
-        return run_owned(firmware, info, seconds, mode, ports, name, temperature, network)
+        return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario)
 
 
-def run_owned(firmware, info, seconds, mode, ports, name, temperature, network):
+def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -143,7 +149,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network):
     ]
     atomic_json(out / "command.json", command)
     env = dict(os.environ, RUST_LOG="warn")
-    for key in ("DYLD_INSERT_LIBRARIES", "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE"):
+    for key in ("OQ_NATIVE_GUEST_CLOCK", "OQ_NATIVE_OT_CONTROL", "DYLD_INSERT_LIBRARIES",
+                "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE"):
         env.pop(key, None)
     trace = out / "mmio.jsonl"
     if extension:
@@ -152,8 +159,23 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network):
     if network != "wifi":
         env.update(OQ_W5500_PORT=str(ports["ethernet"]), OQ_W5500_CABLE=str(cable))
 
+    clock_path = out / "guest-clock.bin"
+    if mode == "device":
+        clock_path.write_bytes(bytes(8))
+        env["OQ_NATIVE_GUEST_CLOCK"] = str(clock_path)
+
+    def guest_clock():
+        return struct.unpack("<Q", clock_path.read_bytes())[0] // 1000
+
     fleet = model.OduFleet(odu_library)
-    peer = RtuPeer(fleet)
+    peer = RtuPeer(fleet, guest_clock if mode == "device" else None)
+    dynamics = None
+    if scenario == "dynamics":
+        thermostat = out / "thermostat-heat"
+        dynamics = Dynamics(thermostat, fleet)
+        dynamics.set_heat(False)
+        env["OQ_NATIVE_OT_CONTROL"] = str(thermostat)
+        report["dynamics"] = dynamics.result
     peer.configure_faults(delay_ms=0)
     process = reader = None
     started = time.monotonic()
@@ -300,6 +322,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network):
             report["web_checks"] = report.get("web_checks", 0) + 1
             report["web_last_ok_s"] = round(time.monotonic() - started, 3)
             report["web_port"] = port
+            if dynamics:
+                dynamics.observe(get)
 
     try:
         process = subprocess.Popen(
@@ -331,7 +355,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network):
         error("run", exc)
     finally:
         # End the workload measurement before teardown.
-        report["elapsed_wall_s"] = time.monotonic() - started
+        workload_ended = time.monotonic()
+        report["elapsed_wall_s"] = workload_ended - started
         report["exit_before_cleanup"] = process.poll() if process else None
         report["emulator_stop_requested"] = False
         peer.stop.set()
@@ -360,6 +385,12 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network):
         if peer_stopped:
             try:
                 report["model"] = fleet.snapshot()
+                report["odu_uptime_ms"] = fleet.now_ms
+                if mode == "device":
+                    report["guest_uptime_ms"] = guest_clock()
+                    last_progress = peer.clock_last_progress_at
+                    if last_progress is not None:
+                        report["clock_last_progress_age_s"] = max(0.0, workload_ended - last_progress)
             except Exception as exc:
                 error("outside-unit snapshot", exc)
             try:
@@ -387,6 +418,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network):
             error("final hash", exc)
 
         report["model_errors"] = []
+        ot_events = []
         try:
             if trace.is_file():
                 with trace.open() as capture:
@@ -394,11 +426,15 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network):
                         event = json.loads(line)
                         if event["kind"] == "model-error":
                             report["model_errors"].append(event)
+                        elif event["kind"] == "opentherm":
+                            ot_events.append(event)
                         elif event["kind"] == "ethernet":
                             probe.result["wire"] = event
         except (ValueError, OSError, KeyError) as exc:
             error("native trace", exc)
 
+        if dynamics:
+            dynamics.result["wire"] = wire_evidence(ot_events)
         if _cancel_requested:
             report["cancelled"] = True
         report["qualification"], report["failure_reasons"] = qualify(report)
@@ -426,11 +462,14 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, terminate_owned)
     parser = argparse.ArgumentParser()
     parser.add_argument("--firmware", type=Path, required=True)
-    parser.add_argument("--seconds", type=int, default=90)
+    parser.add_argument("--seconds", type=int)
     parser.add_argument("--mode", choices=("baseline", "trace", "device"), default="device")
     parser.add_argument("--port-base", type=int, default=19460)
     parser.add_argument("--name", default="factory")
     parser.add_argument("--temperature", type=float, default=30.0)
     parser.add_argument("--network", choices=MODES, default="wifi")
+    parser.add_argument("--scenario", choices=("compatibility", "dynamics"), default="compatibility")
     args = parser.parse_args()
-    raise SystemExit(run(args.firmware, args.seconds, args.mode, args.port_base, args.name, args.temperature, args.network))
+    seconds = args.seconds if args.seconds is not None else (420 if args.scenario == "dynamics" else 90)
+    raise SystemExit(run(args.firmware, seconds, args.mode, args.port_base, args.name, args.temperature,
+                         args.network, args.scenario))

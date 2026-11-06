@@ -15,7 +15,7 @@ LAB = ROOT / ".tmp/native-spi"
 EXPECTED = "162761d52bcee36fe8be5fd039202fed5873ca550a83a12229038311a4bbc18c"
 PROTOCOL = 3
 SOURCES = (
-    "native_extension.cpp", "device_model.h", "w5500.h", "ethernet_lan.h",
+    "native_extension.cpp", "device_model.h", "w5500.h", "ethernet_lan.h", "rmt_peer.h", "ot_protocol.h",
     "native/odu_bridge.cpp", "native/odu_bridge.h",
     "vendor/odu/quatt_odu_simulator_model.h",
     "vendor/odu/quatt_odu_communication_watchdog.h",

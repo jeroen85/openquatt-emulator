@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -13,6 +14,7 @@
 #include <mutex>
 #include "device_model.h"
 #include "ethernet_lan.h"
+#include "rmt_peer.h"
 
 namespace {
 using Read = uint32_t (*)(void*, uint32_t);
@@ -46,6 +48,13 @@ MemoryWrite memory_write8 = nullptr;
 uint8_t* executable_base();
 bool device_mode = false;
 double fixture_temperature = 30.0;
+int clock_fd = -1;
+constexpr uint32_t kSystimerValueHi = 0x60023040;
+constexpr uint32_t kSystimerValueLo = 0x60023044;
+constexpr uint32_t kTicksPerMicrosecond = 16;
+
+const char* thermostat_control = nullptr;
+oq_native::RmtPeers::Grow grow_rmt_rx = nullptr;
 
 FILE* trace = nullptr;
 std::atomic_uint64_t event_count{0};
@@ -118,6 +127,23 @@ struct State {
   bool gpio_low = false;
   bool gpio_latched = false;
   bool gpio_asserted = false;
+  uint64_t clock_published_us = 0;
+  std::unique_ptr<oq_native::RmtPeers> rmt;
+
+  oq_native::RmtPeers& open_therm() {
+    if (!rmt) rmt = std::make_unique<oq_native::RmtPeers>(original_read, grow_rmt_rx, trace, thermostat_control);
+    return *rmt;
+  }
+
+  void sample_clock(void* bus, uint32_t low) {
+    const uint64_t hi = original_read(bus, kSystimerValueHi) & 0xfffff;
+    const uint64_t now = ((hi << 32) | low) / kTicksPerMicrosecond;
+    if (now >= clock_published_us + 2000 || now < clock_published_us) {
+      if (pwrite(clock_fd, &now, sizeof(now), 0) != sizeof(now)) fail("Cannot publish S3 timer sample");
+      clock_published_us = now;
+      if (thermostat_control) open_therm().service(bus, now);
+    }
+  }
 
   void refresh_gpio(void* bus) {
     const bool low = model->w5500.interrupt();
@@ -211,12 +237,40 @@ uint32_t read_hook(void* bus, uint32_t address) {
       model_failure(error);
     }
   }
+  if (clock_fd >= 0 && address == kSystimerValueLo) {
+    try {
+      auto& holder = state();
+      std::lock_guard<std::mutex> guard(holder.mutex);
+      const uint32_t low = original_read(bus, address);
+      holder.sample_clock(bus, low);
+      return low;
+    } catch (const std::exception& error) {
+      model_failure(error);
+    }
+  }
   const uint32_t value = original_read(bus, address);
   if (!device_mode) record("read", bus, address, value);
   return value;
 }
 
 void write_hook(void* bus, uint32_t address, uint32_t value) {
+  if (thermostat_control &&
+      (oq_native::RmtPeers::matrix_address(address) || oq_native::RmtPeers::is_tx_start(address, value))) {
+    try {
+      auto& holder = state();
+      std::lock_guard<std::mutex> guard(holder.mutex);
+      auto& peer = holder.open_therm();
+      if (oq_native::RmtPeers::matrix_address(address)) {
+        peer.on_matrix(address, value);
+      } else {
+        peer.on_tx(bus, address, holder.clock_published_us);
+      }
+      original_write(bus, address, value);
+      return;
+    } catch (const std::exception& error) {
+      model_failure(error);
+    }
+  }
   const bool gpio = ethernet_port && (address == kGpioClear || address == kGpioPin9);
   if (device_mode && (observed(address) || gpio)) {
     try {
@@ -331,6 +385,17 @@ __attribute__((constructor)) void initialize() {
   memory_write8 = reinterpret_cast<MemoryWrite>(base + 0xde608);
   const char* mode = std::getenv("OQ_NATIVE_SPI_MODE");
   device_mode = mode && std::strcmp(mode, "device") == 0;
+  if (const char* path = std::getenv("OQ_NATIVE_GUEST_CLOCK")) {
+    clock_fd = open(path, O_WRONLY | O_CLOEXEC);
+    if (!device_mode || clock_fd < 0) fail("Cannot open S3 timer sample file");
+  }
+  if ((thermostat_control = std::getenv("OQ_NATIVE_OT_CONTROL"))) {
+    const uint8_t signature[16] = {0xf4, 0x4f, 0xbe, 0xa9, 0xfd, 0x7b, 0x01, 0xa9,
+                                   0xfd, 0x43, 0x00, 0x91, 0xf3, 0x03, 0x00, 0xaa};
+    if (!device_mode || clock_fd < 0 || !*thermostat_control || std::memcmp(base + 0x2ab448, signature, 16))
+      fail("Native RMT function signature or configuration mismatch");
+    grow_rmt_rx = reinterpret_cast<oq_native::RmtPeers::Grow>(base + 0x2ab448);
+  }
   if (const char* port = std::getenv("OQ_W5500_PORT")) {
     char* end = nullptr;
     const long value = std::strtol(port, &end, 10);

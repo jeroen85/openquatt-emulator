@@ -231,5 +231,48 @@ class EvidenceGates(unittest.TestCase):
         self.assertFalse(qualify(report)[0]["failover"])
 
 
+    def test_device_gate_rejects_a_frozen_model_clock(self):
+        from .qualification import qualify
+
+        report = self.good()
+        report.update(mode="device", odu_uptime_ms=3900, guest_uptime_ms=4000, clock_last_progress_age_s=0.1)
+        first, second = report["peer"]["recent"]
+        first["at_ms"] = 3650
+        second["at_ms"] = 3650
+        self.assertFalse(qualify(report)[0]["odu_clock"])
+        first["at_ms"] = 3000
+        self.assertTrue(qualify(report)[0]["odu_clock"])
+        self.assertFalse(qualify({**report, "clock_last_progress_age_s": 55})[0]["odu_clock"])
+        report["guest_uptime_ms"] = 6000
+        self.assertFalse(qualify(report)[0]["odu_clock"])
+
+    def test_opentherm_checks_require_the_correct_direction_and_timely_write_echo(self):
+        from .dynamics import wire_evidence
+
+        request = {"link": "ott", "direction": "peer-tx", "guest_us": 100000, "word": 0x10101500}
+        reply = {"link": "ott", "direction": "controller-tx", "guest_us": 195000, "word": 0x50101500}
+        self.assertEqual(wire_evidence([request, reply])["ott"]["ack_ids"], [16])
+        for changed in ({"word": 0x50101400}, {"link": "otb"}, {"guest_us": 900000},
+                        {"guest_us": 120000}, {"direction": "peer-tx"}):
+            self.assertEqual(wire_evidence([request, {**reply, **changed}])["ott"]["ack_ids"], [])
+
+    def test_dynamics_gate_requires_both_links_at_the_end_of_the_run(self):
+        from .qualification import qualify
+
+        report = self.good()
+        report.update(guest_uptime_ms=428000, dynamics={"stage": "complete", "wire": {
+            "ott": {"ack_ids": [0, 16, 24], "last_ack_ms": 427000},
+            "otb": {"ack_ids": [0, 1, 25], "last_ack_ms": 426000},
+        }})
+        self.assertTrue(all(qualify(report)[0].values()))
+        for link in ("ott", "otb"):
+            evidence = report["dynamics"]["wire"][link]
+            for stale in (None, 345000, 429000):
+                with self.subTest(link=link, stale=stale):
+                    previous = evidence["last_ack_ms"]
+                    evidence["last_ack_ms"] = stale
+                    self.assertFalse(qualify(report)[0][link])
+                    evidence["last_ack_ms"] = previous
+
 if __name__ == "__main__":
     unittest.main()

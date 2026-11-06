@@ -1,4 +1,5 @@
 #include "device_model.h"
+#include "ot_protocol.h"
 
 #include <cstdio>
 #include <map>
@@ -267,6 +268,24 @@ int main() {
       }
       ethernet.cable = false;
       check(!ethernet.link() && !ethernet.receive(frame.data(), frame.size()));
+      ++cases;
+    }
+    {
+      namespace ot = esphome::virtual_opentherm::protocol;
+      check(ot::self_test());
+      std::array<ot::Run, 68> runs{};
+      const uint32_t answer = 0x40192a80;
+      for (unsigned bit = 0; bit < 34; ++bit) {
+        const bool value = bit == 0 || bit == 33 || (answer & (1u << (32u - bit)));
+        runs[bit * 2] = {500, !value};
+        runs[bit * 2 + 1] = {500, value};
+      }
+      ot::Request frame;
+      check(ot::decode_controller(runs.data(), runs.size(), frame, false) && frame.word == answer);
+      check(!ot::decode_controller(runs.data(), runs.size(), frame));
+      runs[2].level = !runs[2].level;
+      runs[3].level = !runs[3].level;
+      check(!ot::decode_controller(runs.data(), runs.size(), frame, false));
       ++cases;
     }
     std::printf("PASS %d native peripheral boundary cases\n", cases);

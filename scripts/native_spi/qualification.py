@@ -45,4 +45,28 @@ def qualify(report):
             and wire.get("cable") is False and wire.get("link") is False,
             "De terugval van Ethernet naar Wi-Fi is niet aangetoond.",
         )
+    if report.get("mode") == "device":
+        samples = [row["at_ms"] for row in peer.get("recent", []) if "at_ms" in row]
+        odu_ms = report.get("odu_uptime_ms", 0)
+        guest_ms = report.get("guest_uptime_ms", 0)
+        clock_age = report.get("clock_last_progress_age_s", float("inf"))
+        gates["odu_clock"] = (
+            len(samples) >= 2 and max(samples) - min(samples) >= 250 and odu_ms >= max(samples)
+            and 0 <= guest_ms - odu_ms <= 1000 and 0 <= clock_age <= 10,
+            "De ODU-modelklok liep onvoldoende mee met de firmware.",
+        )
+    if dynamics := report.get("dynamics"):
+        wire = dynamics.get("wire", {})
+        for link, ids, description in (
+            ("ott", {0, 16, 24}, "thermostaatuitwisseling op OTT"),
+            ("otb", {0, 1, 25}, "keteluitwisseling op OTB"),
+        ):
+            evidence = wire.get(link, {})
+            last_ack_ms = evidence.get("last_ack_ms")
+            gates[link] = (
+                ids.issubset(evidence.get("ack_ids", [])) and last_ack_ms is not None
+                and 0 <= report.get("guest_uptime_ms", 0) - last_ack_ms <= 10000,
+                f"De {description} is onvolledig of stopte vóór het einde van de proef.",
+            )
+        gates["dynamics"] = (dynamics["stage"] == "complete", "De compressor-, flow- en defrostproef is onvolledig.")
     return {key: bool(value[0]) for key, value in gates.items()}, [reason for ok, reason in gates.values() if not ok]

@@ -4,7 +4,7 @@ Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virt
 
 ## Installatie en gebruik
 
-De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. Je vindt er ook uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
+De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. De CLI biedt ook een dynamische proef met OTT, OTB, compressor, flow en defrost. Je vindt er uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
 
 Start na de installatie de werkbank vanuit deze repo.
 
@@ -40,6 +40,6 @@ Beide buitenunits antwoordden in beide proeven. De firmware gaf geen crashes of 
 
 De uitbreiding modelleert SPI3/GDMA voor MAX31865 en SPI2/GDMA voor de W5500. Het W5500-model biedt socket 0 in MACRAW-modus, RX/TX-ringen, PHY-status en GPIO9-interrupts. De ESP-IDF-driver voert zelf DHCP en TCP/IP uit. De firmware gebruikt de normale provisioning- en herstelpaden.
 
-De hostuitbreiding gebruikt versiegebonden MMIO-entrypoints en de S3-interruptmatrix van een lokale, ad hoc ondertekende kopie van esp-emu. Een andere emulatorbuild heeft een eigen compatibiliteitscontrole nodig. Dit prototype kwalificeert functionele Ethernet- en Wi-Fi-routes. Metingen van elektrische timing en fysieke geheugenmarges horen bij fysieke HIL.
+De hostuitbreiding gebruikt versiegebonden MMIO-entrypoints en de S3-interruptmatrix van een lokale, ad hoc ondertekende kopie van esp-emu. Een andere emulatorbuild heeft een eigen compatibiliteitscontrole nodig. Het model gebruikt de virtuele SYSTIMER als ODU-klok en koppelt digitale OpenTherm-peers aan de native RMT-ontvanger. Metingen van elektrische timing en fysieke geheugenmarges horen bij fysieke HIL.
 
 De buitenunitfixture bouwt uit de meegeleverde GPLv3-broncode van OpenQuatt-Simulator. De oorspronkelijke revisie en hashes staan in [de herkomstgegevens](scripts/native_spi/vendor/odu/provenance.json). Firmwarebeelden, emulatorbestanden en lokale meetlogs blijven in de genegeerde runtimeomgeving.

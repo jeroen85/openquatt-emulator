@@ -25,8 +25,10 @@ def frame(data: bytes) -> bytes:
 
 
 class RtuPeer:
-    def __init__(self, fleet):
+    def __init__(self, fleet, guest_clock=None):
         self.fleet = fleet
+        self.guest_clock = guest_clock
+        self.clock_last_progress_at = None
         self.lock = threading.RLock()
         self.buffer = bytearray()
         self.stats = {"requests": 0, "responses": 0, "crc_errors": 0, "dropped": 0,
@@ -170,6 +172,14 @@ class RtuPeer:
         self.thread = threading.Thread(target=self._run, args=(port,), name="odu-uart", daemon=True)
         self.thread.start()
 
+    def _advance_clock(self):
+        if self.guest_clock is None:
+            return
+        previous = self.fleet.now_ms
+        self.fleet.advance(self.guest_clock())
+        if self.fleet.now_ms != previous:
+            self.clock_last_progress_at = time.monotonic()
+
     def _run(self, port: int):
         pending = collections.deque()
         deadline = time.monotonic() + 30
@@ -189,6 +199,7 @@ class RtuPeer:
             with self.lock:
                 self.connected = True
             while not self.stop.is_set():
+                self._advance_clock()
                 try:
                     # Wake when a queued reply is due, rather than holding it
                     # behind the general 20 ms receive polling interval.
@@ -201,6 +212,7 @@ class RtuPeer:
                         if not self.stop.is_set():
                             raise RuntimeError("Emulator UART bridge closed")
                         break
+                    self._advance_clock()
                     for response in self.feed(data):
                         with self.lock:
                             delay = self.faults["delay_ms"] / 1000
