@@ -39,6 +39,16 @@ from .pr_memory import summarize_pr_recording
 from .pr_workload import PROBES_STOP_MS, WINDOWS as PR_WINDOWS, PrWebLoad, summarize_workload
 from .qualification import qualify
 from .transport import RtuPeer
+from .heating_curve import HeatingCurve
+from .odu_scenarios import ResponseFleet, OduResponse, OduTransients
+from .https_fixture import TlsFixture
+from .https_scenario import HttpsScenario
+
+SCENARIOS = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240,
+             "heating-curve": 2400, "odu-response": 2100, "odu-transients": 2100,
+             "https": 420, "https-reject": 240}
+DYNAMIC_SCENARIOS = {"dynamics": Dynamics, "lowflow": Lowflow, "heating-curve": HeatingCurve,
+                     "odu-response": OduResponse, "odu-transients": OduTransients}
 
 ROOT = Path(__file__).resolve().parents[2]
 LAB = ROOT / ".tmp/native-spi"
@@ -46,6 +56,25 @@ PT1000 = "/sensor/" + urllib.parse.quote("Water Supply Temp (PT1000)", safe="")
 RECORDER_TIMEOUT_S = 8
 RECORDER_FINISH_MARGIN_S = 1
 _cancel_requested = False
+
+
+class ScenarioDeadline(TimeoutError):
+    pass
+
+
+def observe_with_deadline(observe, get, deadline, cancelled):
+    def budgeted_get(*args, **kwargs):
+        if cancelled() or time.monotonic() >= deadline:
+            raise ScenarioDeadline()
+        result = get(*args, **kwargs)
+        if cancelled() or time.monotonic() >= deadline:
+            raise ScenarioDeadline()
+        return result
+    try:
+        observe(budgeted_get)
+    except ScenarioDeadline:
+        return False
+    return True
 
 
 def sha(path):
@@ -108,7 +137,15 @@ def wait_for_owned_listeners(process, ports):
 def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0,
         network="wifi", scenario="compatibility", measure_memory=False, *,
         memory_reference=None, memory_max_drop_bytes=None,
-        baseline_firmware_sha256=None, without_overlap=False):
+        baseline_firmware_sha256=None, without_overlap=False, https_fixture=None):
+    if scenario.startswith("https"):
+        if mode != "device" or network != "ethernet" or https_fixture is None or memory_reference is not None:
+            raise ValueError("HTTPS requires device mode, Ethernet, --https-fixture and no memory baseline")
+        if not (https_fixture / "fixture.json").is_file():
+            raise ValueError("HTTPS fixture manifest missing")
+        measure_memory = True
+    elif https_fixture is not None:
+        raise ValueError("--https-fixture belongs to HTTPS scenarios")
     if memory_max_drop_bytes is not None and (
             memory_reference is None or type(memory_max_drop_bytes) is not int or memory_max_drop_bytes < 0):
         raise ValueError("--memory-max-drop-bytes vereist een referentie en een geheel getal van nul of hoger")
@@ -129,20 +166,20 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
             "scenario": scenario, "mode": mode, "network": network,
             "duration_s": seconds, "fixture_temperature_c": temperature,
         })
-    if not 5 <= seconds <= 1800:
-        raise ValueError("Duration must be 5..1800 host seconds")
+    if not 5 <= seconds <= (3600 if scenario in SCENARIOS and SCENARIOS[scenario] > 1800 else 1800):
+        raise ValueError("Duration outside the scenario's host time limit")
     if not 0 <= temperature <= 100:
         raise ValueError("Temperature must be 0..100 Celsius")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
         raise ValueError("Invalid local run name")
     if network not in MODES or (network != "wifi" and mode != "device"):
         raise ValueError("Ethernet requires the native device mode")
-    if scenario not in ("compatibility", "dynamics", "lowflow", "pr-memory"):
+    if scenario not in SCENARIOS:
         raise ValueError("Invalid test scenario")
-    if scenario in ("dynamics", "lowflow") and (mode != "device" or network == "failover"):
-        raise ValueError("Dynamics and lowflow require device mode on a stable Wi-Fi or Ethernet route")
-    if measure_memory and (mode != "device" or network == "failover" or scenario == "dynamics"):
-        raise ValueError("--memory requires compatibility or lowflow in device mode on Wi-Fi or Ethernet")
+    if scenario in DYNAMIC_SCENARIOS and (mode != "device" or network == "failover"):
+        raise ValueError("Dynamic scenarios require device mode on a stable Wi-Fi or Ethernet route")
+    if measure_memory and (mode != "device" or network == "failover" or scenario not in ("compatibility", "lowflow", "pr-memory", "https", "https-reject")):
+        raise ValueError("Memory recording is unsupported for this scenario or network route")
     if not 1024 <= base <= 65533:
         raise ValueError("Port base must be between 1024 and 65533")
 
@@ -152,11 +189,11 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         ports["ethernet"] = base + 1
     with reserve_ports(ports):
         return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
-                         memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap)
+                         memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture)
 
 
 def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
-              memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap):
+              memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -172,15 +209,30 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         executable = LAB / "runtime/esp-emu.original"
         verify_original(executable)
         extension = None
+    python_sources = {p.name: p.read_bytes() for p in Path(__file__).parent.glob("*.py")}
     report = {
         "schema": 2, "input": info, "mode": mode, "scenario": scenario, "fixture_temperature_c": temperature,
         "duration_s": seconds, "status": "RUNNING", "firmware_elf_used": False,
         "debugger_used": False, "firmware_modified": False, "ports": ports,
         "http": [], "errors": [], "panics": [], "modbus_timing_warnings": [], "setup_complete": False,
-        "sources": {p.name: sha(p) for p in Path(__file__).parent.glob("*.py")},
+        "sources": {name: hashlib.sha256(data).hexdigest() for name,data in python_sources.items()},
         "native_build": native_build, "extension_sha256": sha(extension) if extension else None,
         "executable_sha256": sha(executable), "odu_library_sha256": sha(odu_library), "network": probe.result,
     }
+    if scenario not in ("compatibility", "dynamics", "lowflow", "pr-memory"):
+        report["source_snapshot"] = "scenario-source"
+        source_root = out / report["source_snapshot"]
+        source_root.mkdir()
+        for name, data in python_sources.items():
+            (source_root / name).write_bytes(data)
+        # ensure() compiled these captured native bytes into this exact cache.
+        for name, expected in native_build["source_sha256"].items():
+            source = executable.parent / name
+            if sha(source) != expected:
+                raise ValueError("Compiled native source snapshot changed")
+            target = source_root / "native" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
     if memory_reference is not None and scenario != "pr-memory":
         require_match(runtime_fingerprint(memory_reference["report"]), runtime_fingerprint(report))
     if measure_memory:
@@ -197,7 +249,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     atomic_json(out / "command.json", command)
     env = dict(os.environ, RUST_LOG="warn")
     for key in ("OQ_NATIVE_GUEST_CLOCK", "OQ_NATIVE_OT_CONTROL", "DYLD_INSERT_LIBRARIES",
-                "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE"):
+                "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE",
+                "OQ_LOCAL_TLS_PORT", "OQ_LOCAL_EPOCH"):
         env.pop(key, None)
     trace = out / "mmio.jsonl"
     if extension:
@@ -214,12 +267,18 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     def guest_clock():
         return struct.unpack("<Q", clock_path.read_bytes())[0] // 1000
 
-    fleet = model.OduFleet(odu_library)
+    tls = https = None
+    if https_fixture:
+        identity = json.loads((https_fixture / "fixture.json").read_text())
+        if scenario == "https" and identity.get("factory_sha256") != info["sha256"]:
+            raise ValueError("HTTPS success test requires the factory bin bound to this test CA fixture")
+
+    fleet = (ResponseFleet if scenario.startswith("odu-") else model.OduFleet)(odu_library)
     peer = RtuPeer(fleet, guest_clock if mode == "device" else None)
     dynamics = None
-    if scenario in ("dynamics", "lowflow"):
+    if scenario in DYNAMIC_SCENARIOS:
         thermostat = out / "thermostat-heat"
-        scenario_type = Lowflow if scenario == "lowflow" else Dynamics
+        scenario_type = DYNAMIC_SCENARIOS[scenario]
         dynamics = scenario_type(thermostat, fleet)
         dynamics.set_heat(False)
         env["OQ_NATIVE_OT_CONTROL"] = str(thermostat)
@@ -355,6 +414,10 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             if guest_ms < pr_end_ms:
                 return
             windows = PR_WINDOWS
+        elif https:
+            windows = https.windows()
+            if windows is None:
+                return
         elif scenario == "lowflow":
             if dynamics.result["stage"] != "complete":
                 return
@@ -422,19 +485,26 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             report["web_last_ok_s"] = round(time.monotonic() - started, 3)
             report["web_port"] = port
             if dynamics:
-                dynamics.observe(get)
+                observe_with_deadline(dynamics.observe, get, deadline, lambda: _cancel_requested or stop.is_set())
+            if https:
+                observe_with_deadline(https.observe, get, deadline, lambda: _cancel_requested or stop.is_set())
             if pr_load and report["web_checks"] >= 2:
                 pr_load.ready(guest_clock())
             if measure_memory:
                 inspect_memory(port)
 
     try:
+        if https_fixture:
+            tls = TlsFixture(https_fixture, guest_clock)
+            env.update(OQ_LOCAL_TLS_PORT=str(tls.port), OQ_LOCAL_EPOCH=str(tls.epoch))
+            https = HttpsScenario(tls, guest_clock, ports["ethernet"], deadline, scenario == "https-reject")
+            report["https"] = https.result
         process = subprocess.Popen(
             command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, errors="replace",
         )
         report["pid"] = process.pid
-        atomic_json(out / "owner.json", {"pid": process.pid, "owned": True, "ports": ports})
+        atomic_json(out / "owner.json", {"pid": process.pid, "runner_pid": os.getpid(), "owned": True, "ports": ports})
         reader = threading.Thread(target=consume, name="firmware-serial", daemon=True)
         reader.start()
         atomic_json(LAB / "latest-run.json", {"run": str(out), "pid": process.pid})
@@ -470,6 +540,22 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         report["elapsed_wall_s"] = workload_ended - started
         report["exit_before_cleanup"] = process.poll() if process else None
         report["emulator_stop_requested"] = False
+        if https:
+            https.stop.set()
+        if tls:
+            try:
+                fixture_stopped = tls.close()
+            except Exception as exc:
+                fixture_stopped = False
+                error("TLS fixture cleanup", exc)
+        if https:
+            try:
+                clients_stopped = https.close()
+                https.finalize()
+                https.result["checks"]["clients_stopped"] = clients_stopped and fixture_stopped
+            except Exception as exc:
+                error("HTTPS cleanup", exc)
+                https.result["checks"] = {"clients_stopped": False}
         if pr_load:
             try:
                 if not pr_load.close():
@@ -560,6 +646,12 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
 
         if dynamics:
             dynamics.result["wire"] = wire_evidence(ot_events)
+            if hasattr(dynamics, "finalize"):
+                try:
+                    dynamics.finalize(report)
+                except Exception as exc:
+                    error("scenario evidence", exc)
+                    dynamics.result["checks"] = {"evidence_complete": False}
         if _cancel_requested:
             report["cancelled"] = True
         report["qualification"], report["failure_reasons"] = qualify(report)
@@ -610,18 +702,19 @@ if __name__ == "__main__":
     parser.add_argument("--name", default="factory")
     parser.add_argument("--temperature", type=float)
     parser.add_argument("--network", choices=MODES)
-    parser.add_argument("--scenario", choices=("compatibility", "dynamics", "lowflow", "pr-memory"))
+    parser.add_argument("--scenario", choices=SCENARIOS)
     parser.add_argument("--memory", action="store_true", help="Read stock internal heap samples during compatibility or lowflow")
     parser.add_argument("--memory-baseline", type=Path, help="Compare the heap run with a qualified report.json")
     parser.add_argument("--memory-max-drop-bytes", type=int, help="Maximum heap drop in bytes. A PR-memory excess requests a repeat run.")
     parser.add_argument("--memory-baseline-firmware-sha256", help="Expected dev factory-bin SHA-256 for pr-memory")
     parser.add_argument("--without-overlap", action="store_true", help="Run the pr-memory negative control")
+    parser.add_argument("--https-fixture", type=Path, help="Private local TLS fixture directory")
     args = parser.parse_args()
     try:
         reference = read_reference(args.memory_baseline) if args.memory_baseline is not None else None
         defaults = settings(reference["report"]) if reference else {}
         scenario = args.scenario or defaults.get("scenario", "compatibility")
-        default_seconds = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240}
+        default_seconds = SCENARIOS
         seconds = args.seconds if args.seconds is not None else defaults.get("duration_s", default_seconds[scenario])
         raise SystemExit(run(
             args.firmware, seconds, args.mode or defaults.get("mode", "device"), args.port_base, args.name,
@@ -629,6 +722,7 @@ if __name__ == "__main__":
             args.network or defaults.get("network", "wifi"), scenario, args.memory,
             memory_reference=reference, memory_max_drop_bytes=args.memory_max_drop_bytes,
             baseline_firmware_sha256=args.memory_baseline_firmware_sha256, without_overlap=args.without_overlap,
+            https_fixture=args.https_fixture,
         ))
     except ValueError as exc:
         parser.error(str(exc))

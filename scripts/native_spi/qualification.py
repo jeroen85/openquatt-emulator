@@ -1,7 +1,7 @@
 """Explicit evidence gates for a complete bin-only compatibility run."""
 import signal
 
-from .lowflow import lowflow_gates
+from .lowflow import lowflow_gates, command_value
 from .network_probe import ETHERNET_IP
 
 
@@ -69,7 +69,20 @@ def qualify(report):
                 and 0 <= report.get("guest_uptime_ms", 0) - last_ack_ms <= 10000,
                 f"De {description} is onvolledig of stopte vóór het einde van de proef.",
             )
-        gates["dynamics"] = (dynamics["stage"] == "complete", "De compressor-, flow- en defrostproef is onvolledig.")
+        gates["dynamics"] = (dynamics["stage"] == "complete", "De dynamische proef is onvolledig.")
+        if "version" in dynamics:
+            gates["wire_history"] = (peer.get("write_history_complete") is True,
+                                     "De Modbus-schrijfhistorie is onvolledig; vroege opdrachten ontbreken.")
+            if report.get("scenario") in ("heating-curve", "odu-response", "odu-transients"):
+                gates["heating_modes"] = (all(command_value(row, 3999) in (None, 0, 2)
+                    for row in report.get("writes", []) if not row["exception"]),
+                    "Een verwarmingsscenario bevat een opdracht voor een andere ODU-modus dan Standby of Heating.")
+            checks = dynamics.get("checks", {})
+            gates["scenario_evidence"] = (bool(checks), "De scenario-eindcontrole ontbreekt.")
+            for key, ok in checks.items():
+                gates["scenario_" + key] = (ok is True, f"Scenariocontrole faalt: {key}.")
+            if dynamics.get("violation"):
+                gates["scenario_violation"] = (False, dynamics["violation"])
         if "lowflow" in dynamics:
             gates.update(lowflow_gates(dynamics, report.get("writes", [])))
     if "memory" in report:
@@ -77,6 +90,11 @@ def qualify(report):
         gaps = [name for name, phase in memory.get("phases", {}).items() if not phase["covered"]]
         reason = f"Onvoldoende heapmetingen voor {', '.join(gaps)}." if gaps else "De heapmeting is onvolledig."
         gates["memory"] = (memory.get("complete") is True, memory.get("error", reason))
+    if "https" in report:
+        checks = report["https"].get("checks", {})
+        gates["https_evidence"] = (bool(checks), "De HTTPS-eindcontrole ontbreekt.")
+        for key, ok in checks.items():
+            gates["https_" + key] = (ok is True, f"HTTPS-controle faalt: {key}.")
     if "pr_memory" in report:
         pr = report["pr_memory"]
         workload = pr["workload"]

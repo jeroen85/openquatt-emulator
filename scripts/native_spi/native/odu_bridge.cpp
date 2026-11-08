@@ -16,6 +16,7 @@ namespace odu = esphome::quatt_odu_simulator;
 struct Bridge {
   odu::QuattOduSimulatorModel model;
   uint32_t now_ms{0U};
+  float hz20{0.0f}, hz26{0.0f}, response_ramp{20.0f};
 };
 
 bool valid_profile(int profile) { return profile >= 0 && profile <= 4; }
@@ -32,7 +33,20 @@ bool advance(Bridge& bridge, uint32_t now_ms) {
     const uint32_t step = std::min(remaining, 100U);
     bridge.now_ms += step;
     bridge.model.advance_communication_watchdog(bridge.now_ms);
+    auto& before = bridge.model.mutable_state();
+    auto& settings = bridge.model.mutable_settings();
+    const bool frozen = settings.freeze_measured_frequency;
+    const float command = before.requested_table_frequency_hz;
+    const float response = command == 20.0f ? bridge.hz20 : command == 26.0f ? bridge.hz26 : 0.0f;
+    if (response > 0.0f && before.active_mode == odu::WorkingMode::HEATING &&
+        before.requested_mode == odu::WorkingMode::HEATING && before.accepted_physical_level > 0U &&
+        !before.defrost_active()) {
+      const float change = bridge.response_ramp * static_cast<float>(step) / 1000.0f;
+      before.measured_frequency_hz += std::clamp(response - before.measured_frequency_hz, -change, change);
+      settings.freeze_measured_frequency = true;
+    }
     bridge.model.update(static_cast<float>(step) / 1000.0f);
+    settings.freeze_measured_frequency = frozen;
     auto& state = bridge.model.mutable_state();
     if ((state.force_no_flow || bridge.model.settings().flow_offset_lph == 0.0f) && state.flow_lph < 0.05f) {
       state.flow_lph = 0.0f;
@@ -84,6 +98,16 @@ bool number(char (&output)[32], double value) {
 }  // namespace
 
 extern "C" {
+
+int oq_odu_set_response(void* handle, float hz20, float hz26, float ramp) noexcept {
+  if (!handle || !std::isfinite(hz20) || !std::isfinite(hz26) || !std::isfinite(ramp) || hz20 < 0 || hz20 > 90 ||
+      hz26 < 0 || hz26 > 90 || ramp <= 0 || ramp > 100)
+    return 0;
+  get(handle)->hz20 = hz20;
+  get(handle)->hz26 = hz26;
+  get(handle)->response_ramp = ramp;
+  return 1;
+}
 
 void* oq_odu_create(int profile, uint32_t now_ms) noexcept {
   if (!valid_profile(profile)) return nullptr;

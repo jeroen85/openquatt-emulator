@@ -16,15 +16,21 @@ Open [de simulatorwerkbank](http://127.0.0.1:19450/) om een factory-bin te kieze
 
 Voor de virtuele dagmeting met OpenTherm-ketel en GPIO-flow is er een aparte labbuild met regressietests. [Dagmeting met ketelwarmte](docs/ketelproef.md)
 
+De CLI biedt daarnaast vaste proeven voor stooklijnbedrijf, afwijkende ODU-frequenties, opstart/oil return en lokale HTTPS-verzoeken met foutinjectie en herstel. De HTTPS-succesproef gebruikt een afzonderlijke test-CA-build; de gewone factory-bin controleert de certificaatafwijzing. [Scenario’s en testcriteria](docs/scenarios.md)
+
 ## Emulatorcode testen
 
 ```sh
-python3 -m unittest scripts.native_spi.test_tooling
+python3 -m unittest scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios
 mkdir -p .tmp/native-spi
 oq_sdk="$(xcrun --sdk macosx --show-sdk-path)"
 xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++17 \
   -Wall -Wextra -Werror scripts/native_spi/test_model.cpp -o .tmp/native-spi/test_model
 .tmp/native-spi/test_model
+xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++17 \
+  -Wall -Wextra -Werror scripts/native_spi/test_scenarios.cpp scripts/native_spi/native/odu_bridge.cpp \
+  -o .tmp/native-spi/test_scenarios
+.tmp/native-spi/test_scenarios
 ```
 
 ## Gevalideerd met een ongewijzigde Q Duo-bin

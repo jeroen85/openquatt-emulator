@@ -13,22 +13,36 @@
 #include <string>
 #include <vector>
 #include "w5500.h"
+#include "local_services.h"
+#include <cstdlib>
 
 namespace oq_native {
 class EthernetLan {
  public:
   EthernetLan(W5500& chip, int port, const char* cable_path, FILE* trace)
       : chip_(chip), cable_path_(cable_path), trace_(trace) {
+    const char* tls = std::getenv("OQ_LOCAL_TLS_PORT");
+    const char* epoch = std::getenv("OQ_LOCAL_EPOCH");
+    if (tls && epoch) {
+      const long port = std::strtol(tls, nullptr, 10);
+      const auto timestamp = std::strtoul(epoch, nullptr, 10);
+      if (port < 1024 || port > 65535 || timestamp < 1700000000UL || timestamp > 4000000000UL)
+        throw std::runtime_error("Invalid local HTTPS fixture");
+      local_ = std::make_unique<LocalServices>(port, static_cast<uint32_t>(timestamp));
+    } else if (tls || epoch) {
+      throw std::runtime_error("Incomplete local HTTPS fixture");
+    }
     SlirpConfig config{};
     config.version = 6;
-    config.restricted = 1;
+    config.restricted = local_ ? 0 : 1;
     config.in_enabled = true;
     config.vnetwork = ip("10.42.0.0");
     config.vnetmask = ip("255.255.255.0");
     config.vhost = ip("10.42.0.2");
     config.vdhcp_start = ip("10.42.0.15");
-    config.disable_dns = true;
-    config.disable_host_loopback = true;
+    config.disable_dns = !local_;
+    if (local_) config.vnameserver = ip("10.42.0.3");
+    config.disable_host_loopback = !local_;
 
     callbacks_.send_packet = receive_packet;
     callbacks_.clock_get_ns = [](void*) -> int64_t {
@@ -41,6 +55,13 @@ class EthernetLan {
     if (!slirp_ || slirp_add_hostfwd(slirp_.get(), 0, ip("127.0.0.1"), port, config.vdhcp_start, 80) != 0)
       throw std::runtime_error("Unable to listen on the W5500 HTTP port");
     chip_.transmit = [this](const uint8_t* data, size_t size) {
+      LocalServices::Bytes packet;
+      if (local_) {
+        packet.assign(data, data + size);
+        if (local_->outgoing(packet, [this](const auto& reply) { chip_.receive(reply.data(), reply.size()); })) return;
+        data = packet.data();
+        size = packet.size();
+      }
       if (auto packet = dhcp(data, size, 68, 67); packet && packet->type == 3) requested_ = packet;
       slirp_input(slirp_.get(), data, size);
     };
@@ -74,12 +95,20 @@ class EthernetLan {
                    static_cast<unsigned long long>(chip_.sent), static_cast<unsigned long long>(chip_.received),
                    static_cast<unsigned long long>(chip_.dropped), static_cast<unsigned long long>(dhcp_acks_));
       std::fflush(trace_);
+      if (local_) {
+        std::fprintf(trace_, "{\"kind\":\"local-services\",\"dns\":%llu,\"ntp\":%llu,\"denied\":%llu}\n",
+                     static_cast<unsigned long long>(local_->dns_count),
+                     static_cast<unsigned long long>(local_->ntp_count),
+                     static_cast<unsigned long long>(local_->denied));
+        std::fflush(trace_);
+      }
     }
   }
 
  private:
   using Clock = std::chrono::steady_clock;
   W5500& chip_;
+  std::unique_ptr<LocalServices> local_;
   std::string cable_path_;
   FILE* trace_;
   SlirpCb callbacks_{};
@@ -155,6 +184,12 @@ class EthernetLan {
   static slirp_ssize_t receive_packet(const void* data, size_t size, void* opaque) {
     auto& self = *static_cast<EthernetLan*>(opaque);
     const auto* frame = static_cast<const uint8_t*>(data);
+    LocalServices::Bytes packet;
+    if (self.local_) {
+      packet.assign(frame, frame + size);
+      self.local_->incoming(packet);
+      frame = packet.data();
+    }
     if (self.chip_.receive(frame, size) && self.requested_) {
       const auto reply = dhcp(frame, size, 67, 68);
       const std::array<uint8_t, 4> expected_ip{10, 42, 0, 15};

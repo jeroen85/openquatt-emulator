@@ -36,6 +36,7 @@ class RtuPeer:
         self.faults = {"drop_every": 0, "corrupt_every": 0, "delay_ms": 2}
         self.recent = collections.deque(maxlen=80)
         self.writes = collections.deque(maxlen=2000)
+        self.write_count = 0
         self.last_data_at = 0.0
         self.connected = False
         self.error = None
@@ -55,7 +56,9 @@ class RtuPeer:
     def snapshot(self):
         with self.lock:
             return {**self.stats, **self.faults, "connected": self.connected, "error": self.error,
-                    "recent": list(self.recent), "uart": 1, "wire_timing": False}
+                    "recent": list(self.recent), "uart": 1, "wire_timing": False,
+                    "write_history_complete": self.write_count <= len(self.writes),
+                    "write_history_dropped": max(0, self.write_count - len(self.writes))}
 
     def write_history(self):
         with self.lock:
@@ -150,6 +153,7 @@ class RtuPeer:
                                 "at_ms": self.fleet.now_ms, "exception": exception, "dropped": dropped,
                                 "write_values": write_values})
             if fc in (6, 16):
+                self.write_count += 1
                 self.writes.append({"unit": address, "fc": fc, "register": start,
                     "at_ms": self.fleet.now_ms, "values": list(write_values),
                     "exception": exception, "dropped": dropped})

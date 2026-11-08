@@ -33,6 +33,10 @@ int oq_odu_set_environment(void* handle, double outdoor, double inlet, double ta
 // Couple HP1 outlet to HP2 inlet and synchronize series hydraulic state. Both
 // models must already have the same firmware clock; relay commands stay separate.
 int oq_odu_link_series(void* upstream, void* downstream) OQ_ODU_NOEXCEPT;
+// Explicit fault fixture for low-command frequency responses. Zero disables
+// injection. The requested table/registers stay unchanged; thermodynamics uses
+// the injected measured frequency. These are test phases, not ODU firmware.
+int oq_odu_set_response(void* handle, float hz20, float hz26, float ramp) OQ_ODU_NOEXCEPT;
 // Returns JSON byte count excluding NUL, or -1. On failure a nonempty buffer is
 // cleared rather than exposing truncated JSON. power_w is thermal power.
 int oq_odu_snapshot(void* handle, char* buffer, size_t capacity) OQ_ODU_NOEXCEPT;
