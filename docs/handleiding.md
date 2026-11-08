@@ -167,9 +167,11 @@ In `report.json` vind je de meetpunten onder `dynamics.checkpoints`, de bevestig
 
 Deze aparte labproef combineert OpenTherm-ketelwarmte en GPIO-flow. Hij controleert of dezelfde dagmeting doorloopt van CM3 naar CM4. De [ketelproefhandleiding](ketelproef.md) beschrijft de vastgezette firmwarebron, labbuild, regressietests en runner.
 
-### Vaste stooklijn-, ODU- en HTTPS-proeven
+### Gerichte Power House-, stooklijn- en HTTPS-proeven
 
-Gebruik `--scenario heating-curve`, `odu-response` of `odu-transients` voor de uitgebreidere regelproeven met de gekozen factory-bin. De lokale routes `https` en `https-reject` testen geslaagde TLS-verzoeken, serialisatie, foutafhandeling en certificaatafwijzing. De succesroute vereist een afzonderlijke Q Duo-testbuild met lokale test-CA. De [scenariohandleiding](scenarios.md) beschrijft bouwopdrachten, testduur, criteria en de betekenis van het rapport.
+Begin een firmware-PR met de rooktest `compatibility` en kies daarna de proeven voor de gewijzigde functie. `odu-response` en `odu-transients` testen expliciet Power House: gemeten compressorrespons, Single/Duo-keuze en tijdelijke ODU-fasen met herstel. `heating-curve` test de afzonderlijke stooklijnmodus. Voor HTTPS-gedrag, serialisatie en fout/herstel gebruik je `https` met een afzonderlijke Q Duo-testbuild met lokale test-CA. De [scenariohandleiding](scenarios.md) beschrijft de keuze, criteria en grenzen, waaronder de nog ontbrekende brede Power House-basisproef.
+
+**Onbekende CA afwijzen** (`https-reject`) staat apart bij de [controles van de testopstelling](scenarios.md#controles-van-de-testopstelling). Die controle hoort bij wijzigingen aan de TLS-fixture of haar certificaatvertrouwen en is geen standaardtest voor iedere PR.
 
 ### Flowverlies tijdens defrost, vrijgave en herstart
 

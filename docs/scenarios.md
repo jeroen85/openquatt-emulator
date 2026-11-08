@@ -1,27 +1,77 @@
 # Vaste regressiescenario’s
 
-Gebruik deze CLI-proeven voor wijzigingen aan stooklijnbedrijf, compressorfeedback en HTTPS. De standaardroutes laden de gekozen Q Duo-factory-bin rechtstreeks. De lokale HTTPS-succesproef gebruikt een afzonderlijke Q Duo-testbuild met een eigen test-CA. Een ELF of debugger is voor geen van deze runs nodig.
+Gebruik deze CLI-proeven voor wijzigingen aan Power House, stooklijnbedrijf en HTTPS. De firmwareproeven laden de gekozen Q Duo-factory-bin rechtstreeks, behalve de lokale HTTPS-succesproef: die gebruikt een afzonderlijke Q Duo-testbuild met een eigen test-CA. Een ELF of debugger is voor geen van deze runs nodig.
 
 Kies de exacte bronrevisie, bouw `configs/heatpump_controller_q/duo.yaml` en bewaar de bronrevisie, configuratie, ESPHome-/ESP-IDF-versie en SHA-256 van de factory-bin. De imagecontrole herkent de firmwareopbouw; zij bewijst de bronrevisie niet. De [installatiehandleiding](handleiding.md) beschrijft de runtime en poorten.
 
-## Proef kiezen
+Voer de opdrachten uit vanuit de emulatorrepo en stel het pad naar de gekozen gewone factory-bin in.
+
+```sh
+oq_firmware="/pad/naar/firmware.factory.bin"
+```
+
+## PR-tests kiezen
+
+Begin bij een firmware-PR met de rooktest `compatibility` van 90 s. Kies daarna de proeven die passen bij de wijziging. Een wijziging aan alleen documentatie vraagt geen firmwareproef. Deze indeling beschrijft de testkeuze; er wordt hiermee geen automatische GitHub-workflow ingesteld.
+
+Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warmtepompaansturing staan de Power House-proeven daarom voorop. De stooklijnproef onderzoekt de afzonderlijke modus `Water Temperature Control (heating curve)`.
+
+| Wijziging | Aanvullende proef | Wat je ermee onderzoekt |
+| --- | --- | --- |
+| Power House-dispatch, vermogensinschatting of Single/Duo-keuze | Power House: gemeten ODU-respons (`odu-response`) | Reactie op het verschil tussen gevraagde en gemeten frequentie, Single-keuze en stop/herstart. |
+| Power House bij ontbrekende frequentie, opstartverhoging of oil return | Power House: tijdelijke ODU-fasen (`odu-transients`) | Benodigde capaciteit behouden tijdens de afwijking en terugkeren naar normaal bedrijf. |
+| Stooklijnregeling | `heating-curve` | RECOVERY/MAINTAIN, defrostblokkade, Duo-afbouw en stabiel Single. |
+| OpenTherm, compressor-, flow- of defrostkoppeling | `dynamics` | Digitale OTT/OTB-uitwisseling en de gekoppelde toestanden. |
+| Lowflowbeveiliging of vrijgave na flowherstel | `lowflow` | Beveiligingsingreep en herstel met de vastgelegde firmwaretimers. |
+| Web, netwerk, buffers, taken of andere geheugenbeïnvloedende code | `pr-memory` met baseline en kandidaat | Vergelijkende heapmeting onder gelijktijdige web/SSE-belasting; volg de [handleiding](handleiding.md#geheugenproef-voor-een-pr). |
+| Weer-/manifestverzoeken, TLS-worker of gelijktijdige webactiviteit | `https` | Geslaagde TLS, serialisatie, verbinding afbreken en herstel met de lokale test-CA-build. |
+| Ethernetdriver of netwerkterugval | `compatibility` op Ethernet of met `--network failover` | DHCP, bereikbaarheid en herstel via Wi-Fi. |
+| Dagmeting met ketelwarmte | [Ketelproef](ketelproef.md) | Doorlopen van dezelfde dagteller in CM3/CM4; aparte labbuild vereist. |
+
+**Dekking van Power House:** de twee huidige proeven zijn gerichte regressies met een bewust beperkt frequentiebereik en geïnjecteerde respons. Er ontbreekt nog een brede basisproef die normaal Power House-bedrijf doorloopt: oplopende en aflopende warmtevraag, normale Single/Duo-overgangen en verschillende water- en buitentemperaturen over het beschikbare bereik. Die basisproef is de belangrijkste volgende uitbreiding voor algemene Power House-PR’s.
+
+Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. Vergelijk dan baseline en kandidaat en leg de ontbrekende fase vast; zo’n bestaande afkeur is nog geen door de PR veroorzaakte regressie. De proef krijgt daarmee geen PASS.
+
+## Gerichte firmwareproeven
 
 | Scenario | Standaardduur op de host | Firmware | Controle |
 | --- | ---: | --- | --- |
-| `heating-curve` | 2400 s | Gewone Q Duo-bin | Single in RECOVERY, defrostblokkade, nieuwe inschakelwachttijd, Duo in MAINTAIN, afbouw en 60 s stabiel Single. |
-| `odu-response` | 2100 s | Gewone Q Duo-bin | Eerst normale 26 Hz, daarna 2×26 gevraagd en 2×48 gemeten. Bij 5 kW volgt de Single-keuze, daarna stop en herstart. |
-| `odu-transients` | 2100 s | Gewone Q Duo-bin | Vers 0 Hz onder Heating-mode, 210 s opstartverhoging op 45 Hz, normaal herstel, 120 s oil return op 50 Hz en opnieuw stop/herstart. |
+| Power House: gemeten ODU-respons (`odu-response`) | 2100 s | Gewone Q Duo-bin | Eerst normale 26 Hz, daarna 2×26 gevraagd en 2×48 gemeten. Bij 5 kW volgt de Single-keuze, daarna stop en herstart. |
+| Power House: tijdelijke ODU-fasen (`odu-transients`) | 2100 s | Gewone Q Duo-bin | Vers 0 Hz onder Heating-mode, 210 s opstartverhoging op 45 Hz, normaal herstel, 120 s oil return op 50 Hz en opnieuw stop/herstart. |
+| Stooklijn (`heating-curve`) | 2400 s | Gewone Q Duo-bin | Single in RECOVERY, defrostblokkade, nieuwe inschakelwachttijd, Duo in MAINTAIN, afbouw en 60 s stabiel Single. |
 | `https` | 420 s | Q Duo met lokale test-CA | Weer en manifest met echte TLS, onderlinge serialisatie, verbinding afbreken, nieuwe manifestcheck en herstel onder web/SSE-belasting. |
-| `https-reject` | 240 s | Gewone Q Duo-bin | Beide lokale certificaten worden geweigerd; er mag geen TLS-handshake of HTTP-request slagen. Web en recorder blijven bereikbaar. |
 
 Een doorlopen run is pas geslaagd als alle scenario- en algemene controles slagen. Een onbekende entity, ontbrekende meetfase, afgekapt bewijs of mislukte cleanup levert geen PASS op. Een afwijking kan in de firmware, fixture of meetdekking zitten; lees de gefaalde controle voordat je de oorzaak toewijst.
 
 De stooklijn- en ODU-proeven accepteren maximaal 3600 hostseconden. Gebruik `--seconds` voor extra meettijd als de gastklok onder hostbelasting achterloopt. De vereiste holds blijven op de gastklok staan. Een korte run die de eindfase mist, kwalificeert niet.
 
+## Power House: ODU-respons en tijdelijke verhogingen
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network wifi --scenario odu-response --name response
+
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network wifi --scenario odu-transients --name transients
+```
+
+Beide proeven kiezen expliciet `Heating Control Mode = Power House` en gebruiken V2 en externe warmtevraag via de gewone API. Het beschikbare frequentiebereik is voor deze fixture beperkt tot 20 en 26 Hz. De normale warmtevraag is 9 kW. De minimumlooptijd staat op 300 s; de minimum-uit-tijd van 240 s blijft gelden. De firmwaretimers worden niet versneld.
+
+`odu-response` wijzigt de gemeten respons van 20/26 Hz naar 48/48 Hz. Het gevraagde tabelpunt blijft zichtbaar in R2102; R2103 en het thermische model volgen de gewijzigde respons. Bij 5 kW moet de firmware daarna stabiel voldoende vermogen met één unit kiezen. Deze verwachting hoort bij deze specifieke fixture. Andere warmtevraag of responstabellen kunnen terecht Duo opleveren.
+
+`odu-transients` onderbreekt eerst de frequentietelemetrie gedurende 65 s zonder Heating-mode te wijzigen. Daarna volgen de 45 Hz-opstartfase en oil return met R2119 bit 3. De benodigde tweede unit moet behouden blijven en na de tijdelijke fasen moet normaal bedrijf terugkeren. Vervolgens vraagt de thermostaat een echte stop en opnieuw warmte. De runner controleert de afgesloten aan- en uit-intervallen in de Modbus-opdrachten.
+
+De minimum-uit-tijd geldt per warmtepomp. Een snelle herstart na de gezamenlijke thermostaatstop kan geldig zijn als de gekozen unit daarvoor al langer stilstond. Het rapport vermeldt daarom de unit bij elk interval. Na herstart moeten beide units minstens 60 s aantoonbaar draaien met flow; alleen nieuwe startopdrachten zijn onvoldoende.
+
+Deze intervallen meten de opdrachten. Ze zijn een noodzakelijke controle, maar bewijzen op zichzelf niet de volledige rusttijd vanaf bevestigde stilstand; `timing_coverage` legt die grens vast.
+
+Dit zijn geïnjecteerde tegenproeven. De volledige STM8-firmware draait niet mee; 210 s is geen bewezen opstartduur van een echte ODU. Het geleverde vermogen is modelvermogen. Gebruik de uitkomst voor de reactie van OpenQuatt op deze invoer.
+
+Een firmware zonder de vereiste terugkoppeling kan de responsproef terecht niet halen. Verander de verwachting niet uitsluitend om een groene uitslag te krijgen; leg de waargenomen keuze en het ontbrekende gedrag vast.
+
 ## Stooklijn
 
 ```sh
-oq_firmware="/pad/naar/firmware.factory.bin"
 python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
   --network wifi --scenario heating-curve --name curve
 ```
@@ -35,30 +85,6 @@ Bij het lagere doel moet Duo eerst terugmoduleren. De eindcontrole vereist minst
 De interne afschakeltimer begint bij een vermogensgrens waarbij Single kan overnemen. Beide units hoeven daarom niet de hele minuut op niveau 1 te staan. `minimum_pair_wire_hold` registreert die laatste fase als diagnose, zonder daar een extra minimumtijd aan op te leggen. De proef bewijst het terugmoduleren en de volgorde; de precieze interne vermogensgrens en timer worden hiermee niet afzonderlijk gekwalificeerd.
 
 Deze proef onderzoekt regeltoestanden bij gecontroleerde temperaturen. De constante PT1000 is geen gevalideerd woningmodel en bewijst geen comfort, COP of werkelijke thermische stabiliteit.
-
-## ODU-respons en tijdelijke verhogingen
-
-```sh
-python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
-  --network wifi --scenario odu-response --name response
-
-python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
-  --network wifi --scenario odu-transients --name transients
-```
-
-Beide proeven gebruiken V2 en externe warmtevraag via de gewone API. Het beschikbare frequentiebereik is voor deze fixture beperkt tot 20 en 26 Hz. De normale warmtevraag is 9 kW. De minimumlooptijd staat op 300 s; de minimum-uit-tijd van 240 s blijft gelden. De firmwaretimers worden niet versneld.
-
-`odu-response` wijzigt de gemeten respons van 20/26 Hz naar 48/48 Hz. Het gevraagde tabelpunt blijft zichtbaar in R2102; R2103 en het thermische model volgen de gewijzigde respons. Bij 5 kW moet de firmware daarna stabiel voldoende vermogen met één unit kiezen. Deze verwachting hoort bij deze specifieke fixture. Andere warmtevraag of responstabellen kunnen terecht Duo opleveren.
-
-`odu-transients` onderbreekt eerst de frequentietelemetrie gedurende 65 s zonder Heating-mode te wijzigen. Daarna volgen de 45 Hz-opstartfase en oil return met R2119 bit 3. De benodigde tweede unit moet behouden blijven en na de tijdelijke fasen moet normaal bedrijf terugkeren. Vervolgens vraagt de thermostaat een echte stop en opnieuw warmte. De runner controleert de afgesloten aan- en uit-intervallen in de Modbus-opdrachten.
-
-De minimum-uit-tijd geldt per warmtepomp. Een snelle herstart na de gezamenlijke thermostaatstop kan geldig zijn als de gekozen unit daarvoor al langer stilstond. Het rapport vermeldt daarom de unit bij elk interval. Na herstart moeten beide units minstens 60 s aantoonbaar draaien met flow; alleen nieuwe startopdrachten zijn onvoldoende.
-
-Deze intervallen meten de opdrachten. Ze zijn een noodzakelijke controle, maar bewijzen op zichzelf niet de volledige rusttijd vanaf bevestigde stilstand; `timing_coverage` legt die grens vast.
-
-Dit zijn geïnjecteerde tegenproeven. De volledige STM8-firmware draait niet mee; 210 s is geen bewezen opstartduur van een echte ODU. Het geleverde vermogen is modelvermogen. Gebruik de uitkomst voor de reactie van OpenQuatt op deze invoer.
-
-Een firmware zonder de vereiste terugkoppeling kan de responsproef terecht niet halen. Verander de verwachting niet uitsluitend om een groene uitslag te krijgen; leg de waargenomen keuze en het ontbrekende gedrag vast.
 
 ## HTTPS volledig lokaal
 
@@ -88,9 +114,6 @@ python3 -m scripts.native_spi.https_fixture \
 
 python3 -m scripts.native_spi.run --firmware "$oq_https_bin" \
   --network ethernet --scenario https --https-fixture "$oq_tls" --name local-https
-
-python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
-  --network ethernet --scenario https-reject --https-fixture "$oq_tls" --name local-https-reject
 ```
 
 `--bind-firmware` legt de gekozen binhash naast de bronrevisie, overlay en CA vast. Controleer zelf dat dit het resultaat van de beschreven build is. De succesproef weigert een andere binhash. Genereer bij verlopen certificaten een nieuwe fixture en bouw opnieuw; omzeil de controle niet.
@@ -103,7 +126,28 @@ Na de eerste geslaagde manifestpublicatie verbreekt de server een volgende manif
 
 Een oude zichtbare versietekst bewijst geen herstel. Een SSE-client en webverzoeken blijven actief. De slotfase meet minstens 30 s herstel.
 
-De gewone productie-bin moet in `https-reject` expliciete TLS-afwijzingen geven en mag geen handshake accepteren. De firmware moet ook een mislukte weeropvraag rapporteren. Deze tegenproef hoort bij de succesproef; beide bewijzen verschillende kanten van de certificaatcontrole.
+## Controles van de testopstelling
+
+Deze controles valideren het harnas en de meetketen. Voer ze uit bij wijzigingen aan de relevante testopstelling; ze horen niet standaard bij iedere OpenQuatt-PR.
+
+### Onbekende CA afwijzen
+
+Deze proef controleert of de gewone productie-bin de lokale test-CA blijft weigeren. Gebruik haar bij wijzigingen aan de TLS-fixture, certificaten of de manier waarop de testbuild haar CA vertrouwt. De technische CLI-id blijft `https-reject`, zodat bestaande scripts en rapporten bruikbaar blijven. De standaardduur is 240 hostseconden.
+
+Bereid de fixture voor zoals bij [HTTPS volledig lokaal](#https-volledig-lokaal). Kies voor deze controle de gewone factory-bin.
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network ethernet --scenario https-reject --https-fixture "$oq_tls" --name unknown-ca
+```
+
+Beide lokale certificaten moeten expliciete TLS-afwijzingen geven; geen TLS-handshake of HTTP-request mag slagen. De firmware moet ook een mislukte weeropvraag rapporteren. Web en recorder blijven bereikbaar. Dit controleert de afwijzing van deze onbekende CA; het is geen volledige certificaatbeveiligingsaudit.
+
+### Geheugenproef zonder overlap
+
+Gebruik `pr-memory --without-overlap` bij wijzigingen aan de belastinggenerator of overlapmeting. De clients moeten werken, terwijl de gemeten overlap nul blijft. **Onvergelijkbaar** is dan de verwachte uitkomst. Voor een gewone PR-geheugenvergelijking gebruik je de route mét overlap uit de [handleiding](handleiding.md#geheugenproef-voor-een-pr).
+
+De Python- en native regressietests uit de [README](../README.md#emulatorcode-testen) controleer je bij wijzigingen aan de emulatorcode. Ze valideren het harnas en vervangen de firmwareproeven niet.
 
 ## Rapport en grenzen
 

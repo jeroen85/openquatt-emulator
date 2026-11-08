@@ -16,7 +16,7 @@ Open [de simulatorwerkbank](http://127.0.0.1:19450/) om een factory-bin te kieze
 
 Voor de virtuele dagmeting met OpenTherm-ketel en GPIO-flow is er een aparte labbuild met regressietests. [Dagmeting met ketelwarmte](docs/ketelproef.md)
 
-De CLI biedt daarnaast vaste proeven voor stooklijnbedrijf, afwijkende ODU-frequenties, opstart/oil return en lokale HTTPS-verzoeken met foutinjectie en herstel. De HTTPS-succesproef gebruikt een afzonderlijke test-CA-build; de gewone factory-bin controleert de certificaatafwijzing. [Scenario’s en testcriteria](docs/scenarios.md)
+De CLI biedt daarnaast gerichte Power House-proeven voor gemeten ODU-respons en tijdelijke ODU-fasen, een aparte stooklijnproef en lokale HTTPS met foutinjectie en herstel. De HTTPS-succesproef gebruikt een afzonderlijke test-CA-build. **Onbekende CA afwijzen** controleert de TLS-testopstelling met de gewone factory-bin. De [scenariohandleiding](docs/scenarios.md) maakt onderscheid tussen de standaardrooktest, gerichte PR-proeven en controles van de testopstelling, en beschrijft de nog ontbrekende brede Power House-basisproef.
 
 ## Emulatorcode testen
 
