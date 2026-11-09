@@ -43,12 +43,13 @@ from .heating_curve import HeatingCurve
 from .odu_scenarios import ResponseFleet, OduResponse, OduTransients
 from .https_fixture import TlsFixture
 from .https_scenario import HttpsScenario
+from .power_house import PowerHouse, CLIMATES
 
 SCENARIOS = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240,
              "heating-curve": 2400, "odu-response": 2100, "odu-transients": 2100,
-             "https": 420, "https-reject": 240}
+             "https": 420, "https-reject": 240, "power-house": 2700}
 DYNAMIC_SCENARIOS = {"dynamics": Dynamics, "lowflow": Lowflow, "heating-curve": HeatingCurve,
-                     "odu-response": OduResponse, "odu-transients": OduTransients}
+                     "odu-response": OduResponse, "odu-transients": OduTransients, "power-house": PowerHouse}
 
 ROOT = Path(__file__).resolve().parents[2]
 LAB = ROOT / ".tmp/native-spi"
@@ -137,7 +138,9 @@ def wait_for_owned_listeners(process, ports):
 def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0,
         network="wifi", scenario="compatibility", measure_memory=False, *,
         memory_reference=None, memory_max_drop_bytes=None,
-        baseline_firmware_sha256=None, without_overlap=False, https_fixture=None):
+        baseline_firmware_sha256=None, without_overlap=False, https_fixture=None, power_house_climate=None):
+    if power_house_climate is not None and (scenario != "power-house" or power_house_climate not in CLIMATES):
+        raise ValueError("--power-house-climate requires power-house and a known climate profile")
     if scenario.startswith("https"):
         if mode != "device" or network != "ethernet" or https_fixture is None or memory_reference is not None:
             raise ValueError("HTTPS requires device mode, Ethernet, --https-fixture and no memory baseline")
@@ -189,11 +192,11 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         ports["ethernet"] = base + 1
     with reserve_ports(ports):
         return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
-                         memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture)
+                         memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture, power_house_climate)
 
 
 def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
-              memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None):
+              memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None, power_house_climate=None):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -279,7 +282,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     if scenario in DYNAMIC_SCENARIOS:
         thermostat = out / "thermostat-heat"
         scenario_type = DYNAMIC_SCENARIOS[scenario]
-        dynamics = scenario_type(thermostat, fleet)
+        dynamics = (PowerHouse(thermostat, fleet, power_house_climate or "mild") if scenario == "power-house"
+                    else scenario_type(thermostat, fleet))
         dynamics.set_heat(False)
         env["OQ_NATIVE_OT_CONTROL"] = str(thermostat)
         report["dynamics"] = dynamics.result
@@ -709,6 +713,7 @@ if __name__ == "__main__":
     parser.add_argument("--memory-baseline-firmware-sha256", help="Expected dev factory-bin SHA-256 for pr-memory")
     parser.add_argument("--without-overlap", action="store_true", help="Run the pr-memory negative control")
     parser.add_argument("--https-fixture", type=Path, help="Private local TLS fixture directory")
+    parser.add_argument("--power-house-climate", choices=CLIMATES, help="Power House climate profile (default: mild)")
     args = parser.parse_args()
     try:
         reference = read_reference(args.memory_baseline) if args.memory_baseline is not None else None
@@ -723,6 +728,7 @@ if __name__ == "__main__":
             memory_reference=reference, memory_max_drop_bytes=args.memory_max_drop_bytes,
             baseline_firmware_sha256=args.memory_baseline_firmware_sha256, without_overlap=args.without_overlap,
             https_fixture=args.https_fixture,
+            power_house_climate=args.power_house_climate,
         ))
     except ValueError as exc:
         parser.error(str(exc))

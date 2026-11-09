@@ -18,6 +18,7 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 
 | Wijziging | Aanvullende proef | Wat je ermee onderzoekt |
 | --- | --- | --- |
+| Normale Power House-aansturing of een brede regelwijziging | Power House-basisproef (`power-house`), met de drie temperatuurprofielen | Opbouw en afbouw van warmtevraag, normale Single/Duo-overgangen, stop en herstart. |
 | Power House-dispatch, vermogensinschatting of Single/Duo-keuze | Power House: gemeten ODU-respons (`odu-response`) | Reactie op het verschil tussen gevraagde en gemeten frequentie, Single-keuze en stop/herstart. |
 | Power House bij ontbrekende frequentie, opstartverhoging of oil return | Power House: tijdelijke ODU-fasen (`odu-transients`) | Benodigde capaciteit behouden tijdens de afwijking en terugkeren naar normaal bedrijf. |
 | Stooklijnregeling | `heating-curve` | RECOVERY/MAINTAIN, defrostblokkade, Duo-afbouw en stabiel Single. |
@@ -28,7 +29,7 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | Ethernetdriver of netwerkterugval | `compatibility` op Ethernet of met `--network failover` | DHCP, bereikbaarheid en herstel via Wi-Fi. |
 | Dagmeting met ketelwarmte | [Ketelproef](ketelproef.md) | Doorlopen van dezelfde dagteller in CM3/CM4; aparte labbuild vereist. |
 
-**Dekking van Power House:** de twee huidige proeven zijn gerichte regressies met een bewust beperkt frequentiebereik en geïnjecteerde respons. Er ontbreekt nog een brede basisproef die normaal Power House-bedrijf doorloopt: oplopende en aflopende warmtevraag, normale Single/Duo-overgangen en verschillende water- en buitentemperaturen over het beschikbare bereik. Die basisproef is de belangrijkste volgende uitbreiding voor algemene Power House-PR’s.
+**Dekking van Power House:** de basisproef gebruikt het normale frequentiebereik en de gewone ODU-modelrespons. De aanvullende routes `odu-response` en `odu-transients` blijven gerichte regressies met geïnjecteerde afwijkingen. De basisproef stuurt externe warmtevraag via de gewone API; zij kwalificeert daarmee nog niet het interne woningmodel, leren/voorspellen of elke combinatie van niveau en temperatuur.
 
 Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. Vergelijk dan baseline en kandidaat en leg de ontbrekende fase vast; zo’n bestaande afkeur is nog geen door de PR veroorzaakte regressie. De proef krijgt daarmee geen PASS.
 
@@ -36,6 +37,7 @@ Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. 
 
 | Scenario | Standaardduur op de host | Firmware | Controle |
 | --- | ---: | --- | --- |
+| Power House-basisproef (`power-house`) | 2700 s per profiel | Gewone Q Duo-bin | 0 → 2600 → 5000 → 10000 → 5000 → 2600 → 0 → 2600 W, normale Single/Duo-overgangen en blijvend bedrijf na herstel. |
 | Power House: gemeten ODU-respons (`odu-response`) | 2100 s | Gewone Q Duo-bin | Eerst normale 26 Hz, daarna 2×26 gevraagd en 2×48 gemeten. Bij 5 kW volgt de Single-keuze, daarna stop en herstart. |
 | Power House: tijdelijke ODU-fasen (`odu-transients`) | 2100 s | Gewone Q Duo-bin | Vers 0 Hz onder Heating-mode, 210 s opstartverhoging op 45 Hz, normaal herstel, 120 s oil return op 50 Hz en opnieuw stop/herstart. |
 | Stooklijn (`heating-curve`) | 2400 s | Gewone Q Duo-bin | Single in RECOVERY, defrostblokkade, nieuwe inschakelwachttijd, Duo in MAINTAIN, afbouw en 60 s stabiel Single. |
@@ -44,6 +46,44 @@ Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. 
 Een doorlopen run is pas geslaagd als alle scenario- en algemene controles slagen. Een onbekende entity, ontbrekende meetfase, afgekapt bewijs of mislukte cleanup levert geen PASS op. Een afwijking kan in de firmware, fixture of meetdekking zitten; lees de gefaalde controle voordat je de oorzaak toewijst.
 
 De stooklijn- en ODU-proeven accepteren maximaal 3600 hostseconden. Gebruik `--seconds` voor extra meettijd als de gastklok onder hostbelasting achterloopt. De vereiste holds blijven op de gastklok staan. Een korte run die de eindfase mist, kwalificeert niet.
+
+## Power House-basisproef
+
+De basisproef kiest `Heating Control Mode = Power House`, beide ODU’s als V2 en de normale volledige frequentietabel. Er is geen frequentie-injectie of uitgesloten frequentiegebied. De nominale serieflow is 800 L/h. De kamertemperatuur en het setpoint staan via de gewone API beide op 21 °C; OTT levert de echte digitale heat-enable. Zo blijft de room-feedback nul en kan de proef de opgegeven warmtevraag volgen.
+
+De instellingen zijn Balanced met 8 min stijgtijd en 3 min daaltijd, een opgegeven huisvermogen van 15000 W en een minimumlooptijd van 300 s. De minimum-uit-tijd van 240 s blijft actief. De firmwaretimers worden niet versneld. De runner ververst de buiten- en kamertemperatuur, het setpoint en de externe vraag elke 5 gastseconden, ook na de laatste herstelfase.
+
+| Profiel | Buiten | ODU-retour |
+| --- | ---: | ---: |
+| `mild` | 8 °C | 30 °C |
+| `cold` | −5 °C | 30 °C |
+| `warm-water` | 8 °C | 40 °C |
+
+Elke run test één profiel; zonder extra keuze is dat `mild`. Voor dekking van de drie temperatuurcombinaties voer je alle drie de opdrachten uit. Functionele runs mogen naast elkaar op eigen poorten. Bij zware hostbelasting kun je ze achter elkaar draaien of `--seconds` verhogen tot maximaal 3600.
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network wifi --scenario power-house --power-house-climate mild \
+  --port-base 19700 --name power-house-mild
+
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network wifi --scenario power-house --power-house-climate cold \
+  --port-base 19704 --name power-house-cold
+
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network wifi --scenario power-house --power-house-climate warm-water \
+  --port-base 19708 --name power-house-warm-water
+```
+
+De vraag loopt achtereenvolgens door 2600, 5000, 10000, 5000 en 2600 W. De runner wacht steeds tot de geselecteerde API-vraag én de effectieve `Power House – P_req` overeenkomen met de stap. Daarna moet geldig bedrijf aanhouden: 90 s op de lage/middenstappen en 300 s op de hoge stap. Bij 2600 W wordt Single verwacht, bij 10000 W Duo. Bij 5000 W zijn beide topologieën toegestaan; de optimizer weegt ook elektrisch verbruik, foutband en hysterese. Er wordt geen specifieke unit, exact niveau of exacte frequentie voorgeschreven.
+
+Bij de stap naar 0 W schakelt de virtuele thermostaat ook heat-enable uit. Dit is dus geen afzonderlijke proef of alleen een API-vraag van 0 W een stop afdwingt. De compressoren moeten aantoonbaar stilstaan. In het koude profiel mag CM98-antivriescirculatie de flow behouden; CM0 vereist nulflow. Na 30 s bevestigde stilstand vraagt OTT weer warmte bij 2600 W. De bestaande herstartbeveiliging moet worden gerespecteerd en Single moet 90 s geldig blijven draaien. De runner blijft dit bedrijf daarna bewaken tot het einde van de ingestelde hostduur; blijvende uitval of een ongeldige eindmeting geeft geen PASS.
+
+Onder `dynamics.phase_results` staan de holds, de gebruikte units en het mediane modelvermogen per fase. Het modelvermogen moet met de vraagstappen stijgen en dalen. Ook moeten frequentiefeedback, firmwaretemperaturen en serieflow bij het model passen. De volledige Modbus-historie controleert de vaste topologie tijdens de lage/hoge holds en keurt verkeerde modi af.
+
+`command_minimum_runtime` en `command_minimum_off` meten intervallen tussen opdrachten; zij bewijzen niet zelfstandig de marges vanaf werkelijk bevestigde start of stilstand. De hoge hold bewijst wel 300 s gemeten, samenhangend Duo-bedrijf. De P_req-sensor publiceert elke 30 s; `demand_slew_plausible` controleert daarom alleen plausibele richting en bovengrenzen met die publicatieonzekerheid. Korte afwijkingen of exacte filtertijdconstanten worden daarmee niet volledig gekwalificeerd.
+
+De ODU-inlaat-/uitlaattemperaturen en hun performance-model variëren met het profiel. De geselecteerde lokale PT1000 blijft voor deze proef een vaste 30 °C. Dit kwalificeert de Power House-regelroute onder deze afgebakende invoer, niet een gekoppeld woningmodel, COP, fysieke capaciteit of de waterlimiter bij een meebewegende systeemaanvoer.
 
 ## Power House: ODU-respons en tijdelijke verhogingen
 

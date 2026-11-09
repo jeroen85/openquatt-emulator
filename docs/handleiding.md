@@ -169,7 +169,9 @@ Deze aparte labproef combineert OpenTherm-ketelwarmte en GPIO-flow. Hij controle
 
 ### Gerichte Power House-, stooklijn- en HTTPS-proeven
 
-Begin een firmware-PR met de rooktest `compatibility` en kies daarna de proeven voor de gewijzigde functie. `odu-response` en `odu-transients` testen expliciet Power House: gemeten compressorrespons, Single/Duo-keuze en tijdelijke ODU-fasen met herstel. `heating-curve` test de afzonderlijke stooklijnmodus. Voor HTTPS-gedrag, serialisatie en fout/herstel gebruik je `https` met een afzonderlijke Q Duo-testbuild met lokale test-CA. De [scenariohandleiding](scenarios.md) beschrijft de keuze, criteria en grenzen, waaronder de nog ontbrekende brede Power House-basisproef.
+Begin een firmware-PR met de rooktest `compatibility` en kies daarna de proeven voor de gewijzigde functie. De Power House-basisproef `power-house` bouwt normale warmtevraag op en af, controleert Single/Duo, stop/herstart en blijvend herstel. Kies met `--power-house-climate` de profielen `mild`, `cold` en `warm-water`; elke run duurt standaard 2700 hostseconden. De [scenariohandleiding](scenarios.md#power-house-basisproef) geeft de opdrachten voor alle drie de profielen en beschrijft de vaste PT1000 en overige dekkingsgrenzen.
+
+`odu-response` en `odu-transients` blijven aanvullende Power House-proeven voor gemeten compressorrespons en tijdelijke ODU-fasen. `heating-curve` test de afzonderlijke stooklijnmodus. Voor HTTPS-gedrag, serialisatie en fout/herstel gebruik je `https` met een afzonderlijke Q Duo-testbuild met lokale test-CA.
 
 **Onbekende CA afwijzen** (`https-reject`) staat apart bij de [controles van de testopstelling](scenarios.md#controles-van-de-testopstelling). Die controle hoort bij wijzigingen aan de TLS-fixture of haar certificaatvertrouwen en is geen standaardtest voor iedere PR.
 

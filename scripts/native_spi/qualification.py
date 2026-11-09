@@ -73,7 +73,7 @@ def qualify(report):
         if "version" in dynamics:
             gates["wire_history"] = (peer.get("write_history_complete") is True,
                                      "De Modbus-schrijfhistorie is onvolledig; vroege opdrachten ontbreken.")
-            if report.get("scenario") in ("heating-curve", "odu-response", "odu-transients"):
+            if report.get("scenario") in ("heating-curve", "odu-response", "odu-transients", "power-house"):
                 gates["heating_modes"] = (all(command_value(row, 3999) in (None, 0, 2)
                     for row in report.get("writes", []) if not row["exception"]),
                     "Een verwarmingsscenario bevat een opdracht voor een andere ODU-modus dan Standby of Heating.")
