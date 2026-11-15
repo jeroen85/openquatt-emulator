@@ -36,6 +36,7 @@ class RtuPeer:
         self.faults = {"drop_every": 0, "corrupt_every": 0, "delay_ms": 2}
         self.recent = collections.deque(maxlen=80)
         self.writes = collections.deque(maxlen=2000)
+        self.offline_frames = collections.deque(maxlen=256)
         self.write_count = 0
         self.last_data_at = 0.0
         self.connected = False
@@ -57,6 +58,7 @@ class RtuPeer:
         with self.lock:
             return {**self.stats, **self.faults, "connected": self.connected, "error": self.error,
                     "recent": list(self.recent), "uart": 1, "wire_timing": False,
+                    "offline_frames": list(self.offline_frames),
                     "write_history_complete": self.write_count <= len(self.writes),
                     "write_history_dropped": max(0, self.write_count - len(self.writes))}
 
@@ -108,14 +110,16 @@ class RtuPeer:
             self.stats["unknown_addresses"] += 1
             return None
         index = address - 1
+        start, count_or_value = struct.unpack(">HH", data[2:6])
+        count = 1 if fc == 6 else count_or_value
         with self.fleet.lock:
             if not self.fleet.online[index] or self.fleet.profiles[index] == "Disabled":
                 self.stats["dropped"] += 1
+                self.offline_frames.append({"unit": address, "fc": fc, "register": start,
+                                            "count": count, "at_ms": self.fleet.now_ms})
                 return None
             self.stats["requests"] += 1
             sequence = self.stats["requests"]
-            start, count_or_value = struct.unpack(">HH", data[2:6])
-            count = 1 if fc == 6 else count_or_value
             dropped = bool(self.faults["drop_every"] and sequence % self.faults["drop_every"] == 0)
             # Receipt resets the ODU watchdog even when its ACK is deliberately lost.
             self.fleet.observe_request(index, address, fc, start, count, dropped)

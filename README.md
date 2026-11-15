@@ -18,12 +18,12 @@ Voor de virtuele dagmeting met OpenTherm-ketel en GPIO-flow is er een aparte lab
 
 De CLI biedt een Power House-basisproef met normale vraagopbouw en -afbouw, Single/Duo-overgangen en drie temperatuurprofielen. Er zijn aanvullende proeven voor gemeten ODU-respons en tijdelijke ODU-fasen, een aparte stooklijnproef en lokale HTTPS met foutinjectie en herstel. De HTTPS-succesproef gebruikt een afzonderlijke test-CA-build. **Onbekende CA afwijzen** controleert de TLS-testopstelling met de gewone factory-bin. De [scenariohandleiding](docs/scenarios.md) beschrijft testkeuze, opdrachten en dekkingsgrenzen.
 
-De CLI biedt ook vaste proeven voor defrostketelhulp, OpenTherm-setpointgrenzen, herstart en OTA op een eigen flashkopie en geheugen tijdens een export. [Kies een proef bij je wijziging](docs/scenarios.md#pr-tests-kiezen)
+De CLI biedt ook vaste proeven voor defrostketelhulp, OpenTherm-setpointgrenzen, herstart en OTA op een eigen flashkopie, geheugen tijdens een export, bronuitval, Modbus-uitval en dauwpuntbeveiliging. [Kies een proef bij je wijziging](docs/scenarios.md#pr-tests-kiezen)
 
 ## Emulatorcode testen
 
 ```sh
-python3 -m unittest scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios
+python3 -m unittest scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios scripts.native_spi.test_safety_scenarios
 mkdir -p .tmp/native-spi
 oq_sdk="$(xcrun --sdk macosx --show-sdk-path)"
 xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++17 \

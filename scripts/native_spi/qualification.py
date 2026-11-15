@@ -5,17 +5,25 @@ from .lowflow import lowflow_gates, command_value
 from .network_probe import ETHERNET_IP
 
 
+FUNCTIONAL_COMPLETION = {"restart", "defrost-assist", "ott-setpoint", "source-loss", "odu-link-loss", "dew-guard"}
+
+
 def qualify(report):
     peer = report.get("peer", {})
     units = {row["unit"] for row in peer.get("recent", []) if row["fc"] == 3 and not row["exception"] and not row["dropped"]}
+    scenario = report.get("scenario")
+    checks = report.get("dynamics", {}).get("checks", {})
+    loss_test = scenario == "odu-link-loss"
     gates = {
         "setup": (report.get("setup_complete") is True, "De firmware heeft setup niet afgerond."),
         "web": (report.get("web_checks", 0) >= 2, "De web-app is onvoldoende bereikbaar geweest."),
         "pt1000": (report.get("pt1000_verified") is True, "De PT1000-meetwaarde wijkt af van de fixture."),
         "outside_units": (units == {1, 2}, "Niet beide buitenunits hebben registeruitlezingen beantwoord."),
-        "firmware": (not report.get("panics") and not report.get("modbus_timing_warnings"), "De firmware meldde een crash of Modbus-timingwaarschuwing."),
+        "firmware": (not report.get("panics") and (not report.get("modbus_timing_warnings")
+                     or (loss_test and checks.get("planned_modbus_timeouts_only") is True)), "De firmware meldde een crash of Modbus-timingwaarschuwing."),
         "runner": (not report.get("errors"), "De testrunner meldde een fout."),
-        "uart": (not peer.get("error") and all(peer.get(k) == 0 for k in ("crc_errors", "exceptions", "dropped", "unknown_addresses")), "De buitenunitcommunicatie bevat fouten."),
+        "uart": (not peer.get("error") and all(peer.get(k) == 0 for k in ("crc_errors", "exceptions", "unknown_addresses"))
+                 and (peer.get("dropped") == 0 or (loss_test and checks.get("planned_drops_only") is True)), "De buitenunitcommunicatie bevat fouten."),
         "native_exit": (report.get("exit_before_cleanup") is None and report.get("emulator_stop_requested") is True and report.get("cleanup_exit_code") in (0, -signal.SIGTERM), "De emulator stopte met een foutcode."),
         "duration": (report.get("elapsed_wall_s", 0) >= report["duration_s"], "De volledige testduur is niet voltooid."),
         "fresh_web": (report.get("elapsed_wall_s", 0) - report.get("web_last_ok_s", -999) <= 10, "De web-app antwoordde niet meer aan het einde van de proef."),
@@ -31,7 +39,7 @@ def qualify(report):
         gates["persistent_flash"] = (report.get("flash_file_unchanged") is False
                                       and report.get("flash_final_sha256") is not None,
                                       "De schrijfbare testflash bevat geen aantoonbare wijziging.")
-    if report.get("scenario") in ("restart", "defrost-assist", "ott-setpoint"):
+    if scenario in FUNCTIONAL_COMPLETION:
         gates["duration"] = (report.get("functional_completion") is True,
                              "De fase en haar eindvenster zijn niet voltooid binnen de ingestelde duur.")
     network = report.get("network", {})

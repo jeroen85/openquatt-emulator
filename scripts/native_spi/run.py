@@ -37,7 +37,7 @@ from .network_probe import MODES, NetworkProbe
 from .pr_memory import assessment as pr_assessment, markdown as pr_markdown
 from .pr_memory import summarize_pr_recording
 from .pr_workload import PROBES_STOP_MS, WINDOWS as PR_WINDOWS, PrWebLoad, summarize_workload
-from .qualification import qualify
+from .qualification import FUNCTIONAL_COMPLETION, qualify
 from .transport import RtuPeer
 from .heating_curve import HeatingCurve
 from .odu_scenarios import ResponseFleet, OduResponse, OduTransients
@@ -48,14 +48,17 @@ from .defrost_assist import DefrostAssist, ASSIST_CASES, HANDOVER_VARIANTS
 from .thermostat_setpoint import ThermostatSetpoint
 from .restart import Restart, RESTART_CASES, ota_info
 from .export_memory import ExportMeasurement, EXPORT_PATHS
+from .safety_scenarios import DEW_CASES, DewGuard, OduLinkLoss, SourceLoss
 
 SCENARIOS = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240,
              "heating-curve": 2400, "odu-response": 2100, "odu-transients": 2100,
              "https": 420, "https-reject": 240, "power-house": 2700,
-             "defrost-assist": 1800, "ott-setpoint": 210, "restart": 340}
+             "defrost-assist": 1800, "ott-setpoint": 210, "restart": 340,
+             "source-loss": 950, "odu-link-loss": 820, "dew-guard": 1100}
 DYNAMIC_SCENARIOS = {"dynamics": Dynamics, "lowflow": Lowflow, "heating-curve": HeatingCurve,
                      "odu-response": OduResponse, "odu-transients": OduTransients, "power-house": PowerHouse,
-                     "defrost-assist": DefrostAssist, "ott-setpoint": ThermostatSetpoint, "restart": Restart}
+                     "defrost-assist": DefrostAssist, "ott-setpoint": ThermostatSetpoint, "restart": Restart,
+                     "source-loss": SourceLoss, "odu-link-loss": OduLinkLoss, "dew-guard": DewGuard}
 
 ROOT = Path(__file__).resolve().parents[2]
 LAB = ROOT / ".tmp/native-spi"
@@ -146,7 +149,12 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         memory_reference=None, memory_max_drop_bytes=None,
         baseline_firmware_sha256=None, without_overlap=False, https_fixture=None, power_house_climate=None,
         assist_case=None, handover_variant=None, restart_case=None, ota_image=None, ota_python=None,
-        memory_export=None, export_min_rows=None, export_probe=False, export_seed=False):
+        memory_export=None, export_min_rows=None, export_probe=False, export_seed=False, dew_case=None):
+    if scenario == "dew-guard":
+        if (dew_case is not None and dew_case not in DEW_CASES) or temperature != 18:
+            raise ValueError("dew-guard gebruikt 18 °C PT1000 en een geldige dauwpuntvariant")
+    elif dew_case is not None:
+        raise ValueError("--dew-case hoort bij dew-guard")
     if memory_export is not None:
         if (scenario != "pr-memory" or memory_export not in EXPORT_PATHS or without_overlap
                 or (export_seed and memory_export != "forecast")
@@ -237,13 +245,13 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
                          assist_case=assist_case, handover_variant=handover_variant, restart_case=restart_case,
                          ota_image=ota_image, ota_identity=ota_identity, ota_python=ota_python,
                          memory_export=memory_export, export_min_rows=export_min_rows, export_probe=export_probe,
-                         export_seed=export_seed)
+                         export_seed=export_seed, dew_case=dew_case)
 
 
 def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
               memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None, power_house_climate=None,
               assist_case=None, handover_variant=None, restart_case=None, ota_image=None,
-              ota_identity=None, ota_python=None, memory_export=None, export_min_rows=None, export_probe=False, export_seed=False):
+              ota_identity=None, ota_python=None, memory_export=None, export_min_rows=None, export_probe=False, export_seed=False, dew_case=None):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -269,6 +277,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "native_build": native_build, "extension_sha256": sha(extension) if extension else None,
         "executable_sha256": sha(executable), "odu_library_sha256": sha(odu_library), "network": probe.result,
     }
+    if scenario == "odu-link-loss":
+        report["modbus_timing_events"] = []
+        report["modbus_link_events"] = []
     if memory_export or scenario not in ("compatibility", "dynamics", "pr-memory"):
         report["source_snapshot"] = "scenario-source"
         source_root = out / report["source_snapshot"]
@@ -349,6 +360,10 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                        OQ_NATIVE_OTB_WATER_CONTROL=str(dynamics.boiler_water))
             if assist_case != "ot":
                 env["OQ_NATIVE_OTB_DISCONNECTED"] = "1"
+        elif scenario == "dew-guard":
+            dynamics = DewGuard(thermostat, fleet, dew_case or "rise")
+        elif scenario == "odu-link-loss":
+            dynamics = OduLinkLoss(thermostat, fleet, peer)
         elif restart_case:
             dynamics = Restart(thermostat, fleet, restart_case, ports, guest_clock,
                                ota_image, ota_identity, ota_python)
@@ -395,6 +410,10 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                     with report_lock:
                         if "Stop waiting for response" in line or "Received unexpected frame" in line:
                             report["modbus_timing_warnings"].append(line.strip())
+                            if scenario == "odu-link-loss":
+                                report["modbus_timing_events"].append({"line": line.strip(), "guest_ms": guest_clock()})
+                        if scenario == "odu-link-loss" and ("HP2 - Modbus OFFLINE" in line or "HP2 - Modbus ONLINE" in line):
+                            report["modbus_link_events"].append({"line": line.strip(), "guest_ms": guest_clock()})
                         if "Active connection: WiFi (automatic recovery)" in line:
                             report.setdefault("wifi_recovery_event_s", time.monotonic() - started)
                         if "ETH driver install error" in line or "W5500 driver unavailable" in line:
@@ -617,7 +636,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                         probe_end = guest_clock()
                         if probe_start < PR_WINDOWS["after"][1] and probe_end >= PR_WINDOWS["before"][0]:
                             background.append([probe_start, probe_end])
-            if scenario in ("restart", "defrost-assist", "ott-setpoint"):
+            if scenario in FUNCTIONAL_COMPLETION:
                 if dynamics.result["stage"] == "complete":
                     if functional_complete_since is None:
                         functional_complete_since = guest_clock()
@@ -832,6 +851,7 @@ if __name__ == "__main__":
     parser.add_argument("--export-probe", action="store_true", help="Vereis seriële meetpunten rond en tijdens de download")
     parser.add_argument("--seed-forecast-export", action="store_true",
                         help="Vul de Vooruitblik-export via de aparte HIL-meetbuild")
+    parser.add_argument("--dew-case", choices=DEW_CASES)
     args = parser.parse_args()
     try:
         reference = read_reference(args.memory_baseline) if args.memory_baseline is not None else None
@@ -839,11 +859,13 @@ if __name__ == "__main__":
         scenario = args.scenario or defaults.get("scenario", "compatibility")
         default_seconds = SCENARIOS
         restart_seconds = {"hard": 340, "software": 340, "running": 1100, "ota": 440}
-        default_duration = restart_seconds.get(args.restart_case, default_seconds[scenario])
+        default_duration = (1400 if scenario == "dew-guard" and args.dew_case == "loss"
+                            else restart_seconds.get(args.restart_case, default_seconds[scenario]))
         seconds = args.seconds if args.seconds is not None else defaults.get("duration_s", default_duration)
+        scenario_temperature = {"defrost-assist": 34.0, "dew-guard": 18.0}.get(scenario, 30.0)
         raise SystemExit(run(
             args.firmware, seconds, args.mode or defaults.get("mode", "device"), args.port_base, args.name,
-            args.temperature if args.temperature is not None else defaults.get("fixture_temperature_c", 34.0 if scenario == "defrost-assist" else 30.0),
+            args.temperature if args.temperature is not None else defaults.get("fixture_temperature_c", scenario_temperature),
             args.network or defaults.get("network", "wifi"), scenario, args.memory,
             memory_reference=reference, memory_max_drop_bytes=args.memory_max_drop_bytes,
             baseline_firmware_sha256=args.memory_baseline_firmware_sha256, without_overlap=args.without_overlap,
@@ -852,7 +874,7 @@ if __name__ == "__main__":
             assist_case=args.assist_case, handover_variant=args.handover_variant,
             restart_case=args.restart_case, ota_image=args.ota_image, ota_python=args.ota_python,
             memory_export=args.memory_export, export_min_rows=args.export_min_rows, export_probe=args.export_probe,
-            export_seed=args.seed_forecast_export,
+            export_seed=args.seed_forecast_export, dew_case=args.dew_case,
         ))
     except ValueError as exc:
         parser.error(str(exc))

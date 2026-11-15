@@ -93,8 +93,13 @@ class RmtPeers {
       }
     }
     if (now >= thermostat_due_) {
+      const int thermostat_state = read_thermostat();
+      if (thermostat_state == 'x') {
+        thermostat_due_ = now + 100000;
+        return;
+      }
       const std::array<uint32_t, 4> frames = {
-          ot::frame(0, 0, heating() ? 0x0100u : 0u),
+          ot::frame(0, 0, thermostat_state == '1' ? 0x0100u : 0u),
           ot::frame(1, 1, ot::f88(40.0f)),
           ot::frame(1, 16, ot::f88(thermostat_input("OQ_NATIVE_OTT_SETPOINT", 21.0f))),
           ot::frame(1, 24, ot::f88(thermostat_input("OQ_NATIVE_OTT_ROOM", 19.0f))),
@@ -148,12 +153,12 @@ class RmtPeers {
     return fallback;
   }
 
-  bool heating() const {
+  int read_thermostat() const {
     FILE* file = std::fopen(thermostat_, "r");
-    if (!file) return false;
+    if (!file) return EOF;
     const int value = std::fgetc(file);
     std::fclose(file);
-    return value == '1';
+    return value;
   }
 
   bool inject(void* bus, unsigned pin, uint32_t word, const char* link, uint64_t now) {

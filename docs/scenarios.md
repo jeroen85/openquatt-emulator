@@ -28,6 +28,9 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | Weer-/manifestverzoeken, TLS-worker of gelijktijdige webactiviteit | `https` | Geslaagde TLS, serialisatie, verbinding afbreken en herstel met de lokale test-CA-build. |
 | Ethernetdriver of netwerkterugval | `compatibility` op Ethernet of met `--network failover` | DHCP, bereikbaarheid en herstel via Wi-Fi. |
 | Dagmeting met ketelwarmte | [Ketelproef](ketelproef.md) | Doorlopen van dezelfde dagteller in CM3/CM4; aparte labbuild vereist. |
+| Uitval en terugkeer van een verwarmingsbron | [`source-loss`](#uitval-van-de-verwarmingsbron) | OpenTherm-frames vallen weg, stop en expliciete bronwissel, daarna terug naar OpenTherm. |
+| Eén buitenunit niet bereikbaar | [`odu-link-loss`](#tijdelijke-uitval-van-een-buitenunit) | HP2 valt uit, HP1 blijft antwoorden, watchdog en herstel via Modbus. |
+| Koelbeveiliging bij een ongeldig of hoog dauwpunt | [`dew-guard`](#dauwpuntbeveiliging-bij-koelen) | Compressorstop, wachttijd en herstart met veilig dauwpunt. |
 | Ketelhulp tijdens defrost | [`defrost-assist`](#ketelhulp-tijdens-defrost) | R1 of OpenTherm, inclusief de betreffende CM3-timers en beveiligingen. |
 | OpenTherm-thermostaat en bronselectie | [`ott-setpoint`](#opentherm-setpointgrenzen) | Verse digitale waarden, setpointgrenzen en herstel. |
 | OTA, opslag, herstart of ODU-overname | [`restart`](#herstart-en-ota) | Nieuwe boot, bewaarde instelling en ODU-continuïteit, afhankelijk van de variant. |
@@ -261,15 +264,51 @@ python3 -m scripts.native_spi.run --firmware "$oq_probe_bin" \
 
 De proefknop vult 4.321 synthetische meetmomenten en 49 scenario’s op firmware met Vooruitblik-opname. De runner controleert de vulling voordat hij de webbelasting start. De probe meet rond de export zo vaak als iedere 100 ms. Ontbreken meetpunten tijdens de overdracht, dan kwalificeert de specifieke piekmeting niet.
 
+## Uitval van de verwarmingsbron
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --scenario source-loss --name q-duo-source-loss
+```
+
+De kamerinputs komen via de API. OpenTherm levert de geselecteerde verwarmingsvrijgave. Zodra een compressor draait, stopt de fixture alle thermostaatframes terwijl de OpenTherm-ketel aangesloten blijft. Een eerder gegeven API-vrijgave blijft beschikbaar als alternatief. De proef eist dat OpenQuatt de geselecteerde bron ongeldig meldt, de compressoren stopt en de stop 25 gastseconden vasthoudt. Pas daarna selecteert de proef expliciet de API, wacht op verwarming en keert terug naar OpenTherm zodra de thermostaat weer verse frames levert. Het rapport koppelt de uitkomsten aan stop- en startopdrachten op Modbus.
+
+Bij bronuitval kan de firmware lopende compressoren tijdens hun resterende minimumlooptijd op lage stand houden. De runner kwalificeert de stop op de gemeten frequentie en beide Modbus-stopopdrachten. Na bekend bronverlies mag alleen de minimumstand van een al draaiende unit worden aangevraagd tot de stop.
+
+Deze proef gebruikt het contract voor een geldige geselecteerde verwarmingsbron uit `tests/hil/scenarios/input-sources.mjs` in OpenQuatt. Uitval van de OpenTherm-verbinding gebruikt de productietimers.
+
+## Tijdelijke uitval van een buitenunit
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --scenario odu-link-loss --name q-duo-odu-link-loss
+```
+
+De proef start beide buitenunits. Alleen HP2 wordt gedurende minstens 135 gastseconden onbereikbaar gemaakt. HP1 moet blijven antwoorden. Als HP1 blijft draaien, moet de geselecteerde flow minstens 400 L/h zijn. De runner controleert na minstens 135 gastseconden of de communicatie-watchdog van het HP2-model actief is en de compressor stilstaat. OpenQuatt moet HP2 als offline herkennen en via de geplande enkelregisterproef op R2099 terugvinden. Het rapport toont de tijdelijk onbeantwoorde frames, de offline- en onlinemeldingen binnen het injectie- en herstelvenster, de grootste pauze tussen HP1-antwoorden (grens 20 gastseconden) en de hervatte HP2-telemetriepoll op Modbus. Onverwachte time-outs, bijvoorbeeld van HP1 of buiten het injectievenster, geven afkeur.
+
+De virtuele watchdog volgt het gedrag van het ingebouwde ODU-model. Het testcontract in OpenQuatt staat in `openquatt/oq_HP_io.yaml` en `tests/python/test_modbus_reliability_telemetry_contract.py`.
+
+## Dauwpuntbeveiliging bij koelen
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --scenario dew-guard --dew-case rise --name q-duo-dew-rise
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --scenario dew-guard --dew-case loss --name q-duo-dew-loss
+```
+
+De fixture houdt de aanvoermeting op 18 °C en vraagt koeling via de API. Met dauwpunt 10 °C moet één compressor aantoonbaar koelen. `rise` geeft 23 °C door en wacht tot de gefilterde veilige aanvoergrens boven de gemeten aanvoer komt. `loss` kiest tijdens bedrijf een Home Assistant-bron zonder geldig dauwpunt. De runner meet de onveilige toestand terwijl de compressor nog draait, controleert de Modbus-stop en bewaakt beide units op startopdrachten tot zowel het dauwpunt als de veilige aanvoergrens herstel bevestigen. De runner controleert beide waarden opnieuw bij de herstart. In beide varianten geldt 240 gastseconden minimum-uit-tijd vanaf de stopmelding. De controle volgt beide units zodat een vroege start via de andere unit onder dezelfde uitgangsvoorwaarden ook afkeurt.
+
+De twee dauwpuntvarianten meten een verschillend firmwarepad. Een bevestigde overschrijding van de dauwpuntgrens moet de compressor vóór afloop van de minimumlooptijd stoppen. Bij een ontbrekend dauwpunt vervalt de koelvrijgave meteen zodra de firmware het verlies bevestigt. De huidige firmware kan een lopende compressor daarna nog op minimumstand houden tot de minimumlooptijd voorbij is. De proef bewaakt welke opdrachten tijdens die resterende minimumlooptijd over Modbus gaan. Het rapport toont de tijd tussen de onveilige meting en de bevestigde stop. Een run zonder meetpunt waarop de unit nog draait bij de onveilige conditie levert onvoldoende bewijs voor deze volgorde. Houd bij `loss` rekening met beide productietimers.
+
+De stopmelding heeft een resolutie van één seconde. Voor de minimum-uit-tijd gebruikt de toets het vroegste mogelijke stoptijdstip. Voor de bovengrens op de looptijd bij hoog dauwpunt gebruikt hij het laatste mogelijke stoptijdstip en de eerste bevestigde Modbus-opdracht voor koelen. De proef gebruikt een vaste aanvoermeting en het contract uit `tests/python/test_cooling_request_dew_stop_runtime.py` in OpenQuatt.
+
 ## Volgende proeven uit OpenQuatt
 
-De testkeuze is getoetst aan OpenQuatt `dev` bij `9829c1eb`, de fysieke HIL-handleiding, hostregressies en recente wijzigingen. Naast de bovenstaande scenario’s zijn dit kandidaten voor virtuele end-to-endproeven.
+De testkeuze is getoetst aan OpenQuatt `dev` bij `9829c1eb`, de fysieke HIL-handleiding, hostregressies en recente wijzigingen. De volgende twee proeven zijn kandidaten voor uitbreiding.
 
 | Proef | Aanleiding en afkeurcriterium |
 | --- | --- |
-| Bronuitval en terugschakelen | De fysieke `input-sources`-proef en `test_input_source_runtime_contract.py`. Laat één API-, HA- of MQTT-bron verlopen en eis de juiste effectieve bron, veilige uitgang en herstel. |
-| Eén buitenunit tijdelijk onbereikbaar | De Modbus-contracttests en de ODU-watchdog. Eis een geldige reactie van de andere unit, veilige stop of terugval volgens het firmwarecontract en herstel met verse telemetrie. |
-| Koelbeveiliging bij verlies van dauwpunt of stijgend dauwpunt | `test_cooling_request_dew_stop_runtime.py`. Leg werkelijke koelopdrachten en de blokkade of gecontroleerde herstart op de bus vast. De temperatuurrespons blijft modelgedrag. |
 | MQTT-herverbinding onder webbelasting | De MQTT-workerregressies van #914 en Q-stackwijziging #933. Eis verse berichten na herverbinding, voortgang van de regellus en een geheugenmeting in hetzelfde venster. |
 | Uur- of daggrens met energiehistorie | Het praktijkgeval van #957. Combineer een gecontroleerde tijdbron en de herstartroute voor controles van herstelmarkering en dubbeltelling. |
 
