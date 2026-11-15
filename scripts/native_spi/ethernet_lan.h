@@ -21,17 +21,12 @@ class EthernetLan {
  public:
   EthernetLan(W5500& chip, int port, const char* cable_path, FILE* trace)
       : chip_(chip), cable_path_(cable_path), trace_(trace) {
-    const char* tls = std::getenv("OQ_LOCAL_TLS_PORT");
-    const char* epoch = std::getenv("OQ_LOCAL_EPOCH");
-    if (tls && epoch) {
-      const long port = std::strtol(tls, nullptr, 10);
-      const auto timestamp = std::strtoul(epoch, nullptr, 10);
-      if (port < 1024 || port > 65535 || timestamp < 1700000000UL || timestamp > 4000000000UL)
-        throw std::runtime_error("Invalid local HTTPS fixture");
-      local_ = std::make_unique<LocalServices>(port, static_cast<uint32_t>(timestamp));
-    } else if (tls || epoch) {
-      throw std::runtime_error("Incomplete local HTTPS fixture");
-    }
+    const auto tls = fixture_number("OQ_LOCAL_TLS_PORT", 1024, 65535);
+    const auto mqtt = fixture_number("OQ_LOCAL_MQTT_PORT", 1024, 65535);
+    const auto epoch = fixture_number("OQ_LOCAL_EPOCH", 1700000000UL, 4000000000UL);
+    if ((tls && !epoch) || (tls && mqtt)) throw std::runtime_error("Invalid local services combination");
+    if (tls || mqtt || epoch) local_ = std::make_unique<LocalServices>(tls, epoch, mqtt);
+    advance_clock_ = epoch && !tls;
     SlirpConfig config{};
     config.version = 6;
     config.restricted = local_ ? 0 : 1;
@@ -64,7 +59,10 @@ class EthernetLan {
       LocalServices::Bytes packet;
       if (local_) {
         packet.assign(data, data + size);
-        if (local_->outgoing(packet, [this](const auto& reply) { chip_.receive(reply.data(), reply.size()); })) return;
+        const auto elapsed = advance_clock_ ? std::chrono::duration_cast<std::chrono::seconds>(
+            Clock::now() - local_clock_start_).count() : 0;
+        if (local_->outgoing(packet, [this](const auto& reply) { chip_.receive(reply.data(), reply.size()); },
+                             static_cast<uint32_t>(elapsed))) return;
         data = packet.data();
         size = packet.size();
       }
@@ -117,6 +115,8 @@ class EthernetLan {
   std::unique_ptr<LocalServices> local_;
   std::string cable_path_;
   FILE* trace_;
+  bool advance_clock_ = false;
+  Clock::time_point local_clock_start_ = process_clock_start();
   SlirpCb callbacks_{};
   std::unique_ptr<Slirp, decltype(&slirp_cleanup)> slirp_{nullptr, slirp_cleanup};
   std::vector<pollfd> descriptors_;
@@ -169,6 +169,21 @@ class EthernetLan {
       i += length;
     }
     return std::nullopt;
+  }
+
+  static Clock::time_point process_clock_start() {
+    static const auto start = Clock::now();
+    return start;
+  }
+
+  static unsigned long fixture_number(const char* name, unsigned long min, unsigned long max) {
+    const char* text = std::getenv(name);
+    if (!text) return 0;
+    char* end = nullptr;
+    const auto value = std::strtoul(text, &end, 10);
+    if (end == text || *end != '\0' || value < min || value > max)
+      throw std::runtime_error("Invalid local service fixture setting");
+    return value;
   }
 
   static in_addr ip(const char* text) {

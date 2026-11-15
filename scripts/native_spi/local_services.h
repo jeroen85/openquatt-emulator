@@ -13,10 +13,11 @@ namespace oq_native {
 class LocalServices {
  public:
   using Bytes = std::vector<uint8_t>;
-  LocalServices(uint16_t tls_port, uint32_t epoch) : port_(tls_port), epoch_(epoch) {}
+  LocalServices(uint16_t tls_port, uint32_t epoch, uint16_t mqtt_port = 0)
+      : tls_port_(tls_port), epoch_(epoch), mqtt_port_(mqtt_port) {}
   uint64_t dns_count{0}, ntp_count{0}, denied{0};
 
-  bool outgoing(Bytes& b, const std::function<void(const Bytes&)>& reply) {
+  bool outgoing(Bytes& b, const std::function<void(const Bytes&)>& reply, uint32_t elapsed_s = 0) {
     if (b.size() < 14) return true;
     if (word(b, 12) == 0x0806) return false;  // ARP, no host IP connection.
     if (!ipv4(b)) return true;
@@ -38,24 +39,26 @@ class LocalServices {
         }
         return true;
       }
-      if (dst == 123 && b.size() >= p + 56 && (b[p + 8] & 7) == 3) {
+      if (epoch_ && dst == 123 && b.size() >= p + 56 && (b[p + 8] & 7) == 3) {
         Bytes payload(48, 0);
         payload[0] = 0x24;
         payload[1] = 1;
         payload[2] = 6;
         payload[3] = 0xec;
         std::copy_n(b.begin() + p + 48, 8, payload.begin() + 24);
-        put32(payload, 16, epoch_ + 2208988800U);
-        put32(payload, 32, epoch_ + 2208988800U);
-        put32(payload, 40, epoch_ + 2208988800U);
+        put32(payload, 16, epoch_ + elapsed_s + 2208988800U);
+        put32(payload, 32, epoch_ + elapsed_s + 2208988800U);
+        put32(payload, 40, epoch_ + elapsed_s + 2208988800U);
         ++ntp_count;
         reply(udp_reply(b, p, payload));
         return true;
       }
     }
     if (b[ip + 9] == 6 && b.size() >= p + 20 && gateway(b, ip + 16)) {
-      if (word(b, p + 2) == 443) {
-        put16(b, p + 2, port_);
+      const auto destination = word(b, p + 2);
+      const uint16_t fixture_port = destination == 443 ? tls_port_ : destination == 1883 ? mqtt_port_ : 0;
+      if (fixture_port) {
+        put16(b, p + 2, fixture_port);
         checksums(b);
         return false;
       }
@@ -71,15 +74,20 @@ class LocalServices {
     if (b[ip + 9] == 6 && b.size() >= p + 20 && gateway(b, ip + 12) && word(b, p + 2) == 80 &&
         http_peers_.size() < 4096)
       http_peers_.insert(word(b, p));
-    if (b[ip + 9] == 6 && b.size() >= p + 20 && gateway(b, ip + 12) && word(b, p) == port_) {
-      put16(b, p, 443);
-      checksums(b);
+    if (b[ip + 9] == 6 && b.size() >= p + 20 && gateway(b, ip + 12)) {
+      const auto source = word(b, p);
+      const uint16_t service_port = source == tls_port_ ? 443 : source == mqtt_port_ ? 1883 : 0;
+      if (source && service_port) {
+        put16(b, p, service_port);
+        checksums(b);
+      }
     }
   }
 
  private:
-  uint16_t port_;
+  uint16_t tls_port_;
   uint32_t epoch_;
+  uint16_t mqtt_port_;
   std::set<uint16_t> http_peers_;
   static uint16_t word(const Bytes& b, size_t p) { return uint16_t(b[p]) << 8 | b[p + 1]; }
   static void put16(Bytes& b, size_t p, uint16_t v) {

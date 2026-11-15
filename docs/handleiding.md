@@ -122,7 +122,9 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
 - `--seconds` bepaalt de meetduur in seconden op de host. Voor een volledige proef zijn de bovenstaande tijden een bruikbaar begin. De eerste build van de hostuitbreiding gebeurt vóór die meetduur.
 - `--temperature` stelt de PT1000-fixture in. Gebruik een punt bij decimalen, bijvoorbeeld `30.5`.
 - `--name` is het herkenbare voorvoegsel van de rapportmap. Gebruik letters, cijfers, underscores of koppeltekens en begin met een letter of cijfer.
-- `--port-base 19600` geeft Wi-Fi poort `19600`, Ethernet zo nodig `19601` en UART1 `19602`.
+- `--port-base 19600` geeft Wi-Fi poort `19600`, Ethernet zo nodig `19601` en UART1 `19602`. Reserveer bij `mqtt-reconnect`, `energy-boundary` en `restart` ook `19603`. OTA gebruikt bovendien `19604`.
+
+Voor [MQTT-herverbinding](scenarios.md#mqtt-herverbinding-onder-webbelasting) en de [uur- en daggrens van de energiehistorie](scenarios.md#uur--en-daggrens-van-de-energiehistorie) kiest de CLI de lokale broker of klok. Beide proeven gebruiken Ethernet, een gewone Q Duo-factory-bin en een eigen flashkopie.
 
 De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat alle controles van de gekozen proef geslaagd zijn. Elke andere exitcode betekent dat de proef is afgebroken, een controle faalde of de runner niet kon starten. Voor een geautomatiseerde proef geef je de gewenste factory-bin door aan dezelfde CLI op een macOS-arm64-runner. Gebruik de exitcode en bewaar het rapport van die specifieke proef.
 

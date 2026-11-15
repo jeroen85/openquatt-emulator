@@ -33,6 +33,8 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | Koelbeveiliging bij een ongeldig of hoog dauwpunt | [`dew-guard`](#dauwpuntbeveiliging-bij-koelen) | Compressorstop, wachttijd en herstart met veilig dauwpunt. |
 | Ketelhulp tijdens defrost | [`defrost-assist`](#ketelhulp-tijdens-defrost) | R1 of OpenTherm, inclusief de betreffende CM3-timers en beveiligingen. |
 | OpenTherm-thermostaat en bronselectie | [`ott-setpoint`](#opentherm-setpointgrenzen) | Verse digitale waarden, setpointgrenzen en herstel. |
+| MQTT-ingress, reconnect en webbelasting | [`mqtt-reconnect`](#mqtt-herverbinding-onder-webbelasting) | Sessie-uitval, verse vrijgave na herstel, webverkeer en heap in hetzelfde venster. |
+| Uur- en daggrens van het energiearchief | [`energy-boundary`](#uur--en-daggrens-van-de-energiehistorie) | Uurtoedeling, dagafsluiting, herstelmarkering en behoud bij herstart. |
 | OTA, opslag, herstart of ODU-overname | [`restart`](#herstart-en-ota) | Nieuwe boot, bewaarde instelling en ODU-continuïteit, afhankelijk van de variant. |
 | Geheugen bij recorder- of Vooruitblik-export | [`pr-memory --memory-export`](#geheugen-tijdens-een-export) | Echte download tijdens webbelasting en gerichte meetdekking rond de overdracht. |
 
@@ -303,14 +305,36 @@ De twee dauwpuntvarianten meten een verschillend firmwarepad. Een bevestigde ove
 
 De stopmelding heeft een resolutie van één seconde. Voor de minimum-uit-tijd gebruikt de toets het vroegste mogelijke stoptijdstip. Voor de bovengrens op de looptijd bij hoog dauwpunt gebruikt hij het laatste mogelijke stoptijdstip en de eerste bevestigde Modbus-opdracht voor koelen. De proef gebruikt een vaste aanvoermeting en het contract uit `tests/python/test_cooling_request_dew_stop_runtime.py` in OpenQuatt.
 
-## Volgende proeven uit OpenQuatt
+## MQTT-herverbinding onder webbelasting
 
-De testkeuze is getoetst aan OpenQuatt `dev` bij `9829c1eb`, de fysieke HIL-handleiding, hostregressies en recente wijzigingen. De volgende twee proeven zijn kandidaten voor uitbreiding.
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network ethernet --scenario mqtt-reconnect --port-base 19600 --name q-duo-mqtt
+```
 
-| Proef | Aanleiding en afkeurcriterium |
-| --- | --- |
-| MQTT-herverbinding onder webbelasting | De MQTT-workerregressies van #914 en Q-stackwijziging #933. Eis verse berichten na herverbinding, voortgang van de regellus en een geheugenmeting in hetzelfde venster. |
-| Uur- of daggrens met energiehistorie | Het praktijkgeval van #957. Combineer een gecontroleerde tijdbron en de herstartroute voor controles van herstelmarkering en dubbeltelling. |
+De runner maakt per run een tijdelijke MQTT 3.1.1-broker op host-loopback. De firmware bereikt die via `10.42.0.2:1883`. De broker accepteert de ingebouwde MQTT-ingressclient en levert verwarmingsvrijgave op het topic uit `/mqtt/status`. Je hebt geen externe broker, wachtwoord of aangepaste firmware nodig.
+
+De proef schakelt voor deze ingang de optie voor retained berichten uit. Daardoor hoort een geldige vrijgave bij de actieve sessie. De proef bevestigt eerst zo'n vrijgave. Met een werkende SSE-stream en geslaagde aanvragen van `/0.js` verbreekt de broker de verbinding minstens 26 gastseconden. Tijdens uitval moet de vrijgave ongeldig worden en moet een onafhankelijke kamerinput via de API doorwerken. Na de nieuwe sessie en het nieuwe abonnement blijft de broker minstens zes gastseconden stil. De proef controleert in die periode dat de oude vrijgave ongeldig blijft. Daarna stuurt de broker een vers bericht met de waarde `false`. OpenQuatt moet dit als geldige MQTT-invoer toepassen en de sessie tot aan afsluiting behouden.
+
+Het rapport toont de sessies, beide ontvangen waarden en bewezen overlap van SSE met downloads vóór, tijdens en na de storing. In `memory.phases` staan vrije interne heap, heapmin sinds boot en het grootste vrije blok in de rust-, uitval- en herstelvensters. De recorder meet elke tien gastseconden. De fixture test MQTT-ingress zonder TLS en gebruikt de productietimers.
+
+## Uur- en daggrens van de energiehistorie
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network ethernet --scenario energy-boundary --energy-case hour \
+  --port-base 19610 --name q-duo-energy-hour
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network ethernet --scenario energy-boundary --energy-case day \
+  --port-base 19614 --name q-duo-energy-day
+```
+
+De lokale SNTP-fixture zet de klok op 15 januari 2026, acht minuten voor de grens in `Europe/Amsterdam`. De virtuele buitenunits leveren verbruik en warmte via de gewone firmwarepaden. De runner leest de werkelijke uur- en dagrecords uit `/energy/history`. Elke variant start op een eigen flashkopie van dezelfde factory-bin.
+
+- `hour` loopt van 11:52 over 12:00. Het afgesloten uur moet behouden blijven. De runner slaat een tussenstand op, laat de teller verder oplopen en voert een harde herstart uit. Energie die nog ontbrak in het uurarchief moet in het herstartuur terechtkomen met een herstelmarkering. De uursom moet na herstel aansluiten op de herstelde dagteller. De herstelde waarde moet tussen het opgeslagen energiecheckpoint en de laatste meting vóór de reset liggen, met een afrondingsmarge op die bovengrens. Een harde reset kan het laatste nog niet opgeslagen deel van de live teller verliezen. Na opslaan controleert de runner de herstelmarkering ook in het flasharchief.
+- `day` loopt van 23:52 over middernacht. De vorige dag moet één definitief dagrecord krijgen met de bijbehorende uurrecords. De runner volgt de nieuwe dag minstens 75 gastseconden. Hij controleert of de nieuwe teller vanaf nul oploopt en of de uursom aansluit op de nieuwe dagteller. Zo kan een meegekomen dagtotaal ook opvallen als de uursom vlak na middernacht toevallig nog aansluit. De vorige dag en zijn uurarchief moeten na een harde herstart gelijk blijven.
+
+De proef gebruikt normale tellerupdates en registreert één middernacht buiten de zomertijdwissel. De invoerbin blijft byte-identiek. De harde herstart en archiefschrijfacties gebruiken alleen de private virtuele flashkopie.
 
 ## Rapport en grenzen
 

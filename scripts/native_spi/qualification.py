@@ -5,7 +5,8 @@ from .lowflow import lowflow_gates, command_value
 from .network_probe import ETHERNET_IP
 
 
-FUNCTIONAL_COMPLETION = {"restart", "defrost-assist", "ott-setpoint", "source-loss", "odu-link-loss", "dew-guard"}
+FUNCTIONAL_COMPLETION = {"restart", "defrost-assist", "ott-setpoint", "source-loss", "odu-link-loss", "dew-guard",
+                         "mqtt-reconnect", "energy-boundary"}
 
 
 def qualify(report):
@@ -32,8 +33,9 @@ def qualify(report):
         "spi": (not report.get("model_errors"), "Het native SPI/DMA-model meldde een fout."),
         "completed": (not report.get("cancelled"), "De proef is handmatig gestopt."),
     }
-    restart = report.get("scenario") == "restart"
-    if restart:
+    restart = scenario == "restart"
+    rebooting = restart or scenario == "energy-boundary"
+    if rebooting:
         gates["input"] = (report.get("input_hash_unchanged") is True,
                           "De oorspronkelijke factory-bin is gewijzigd.")
         gates["persistent_flash"] = (report.get("flash_file_unchanged") is False
@@ -64,7 +66,7 @@ def qualify(report):
             and wire.get("cable") is False and wire.get("link") is False,
             "De terugval van Ethernet naar Wi-Fi is niet aangetoond.",
         )
-    if report.get("mode") == "device" and not restart:
+    if report.get("mode") == "device" and not rebooting:
         samples = [row["at_ms"] for row in peer.get("recent", []) if "at_ms" in row]
         odu_ms = report.get("odu_uptime_ms", 0)
         guest_ms = report.get("guest_uptime_ms", 0)

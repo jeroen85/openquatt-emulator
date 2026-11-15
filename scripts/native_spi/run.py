@@ -49,16 +49,20 @@ from .thermostat_setpoint import ThermostatSetpoint
 from .restart import Restart, RESTART_CASES, ota_info
 from .export_memory import ExportMeasurement, EXPORT_PATHS
 from .safety_scenarios import DEW_CASES, DewGuard, OduLinkLoss, SourceLoss
+from .energy_boundary import CASES as ENERGY_CASES, EnergyBoundary
+from .mqtt_reconnect import LocalBroker, MqttReconnect
 
 SCENARIOS = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240,
              "heating-curve": 2400, "odu-response": 2100, "odu-transients": 2100,
              "https": 420, "https-reject": 240, "power-house": 2700,
              "defrost-assist": 1800, "ott-setpoint": 210, "restart": 340,
-             "source-loss": 950, "odu-link-loss": 820, "dew-guard": 1100}
+             "source-loss": 950, "odu-link-loss": 820, "dew-guard": 1100,
+             "mqtt-reconnect": 420, "energy-boundary": 900}
 DYNAMIC_SCENARIOS = {"dynamics": Dynamics, "lowflow": Lowflow, "heating-curve": HeatingCurve,
                      "odu-response": OduResponse, "odu-transients": OduTransients, "power-house": PowerHouse,
                      "defrost-assist": DefrostAssist, "ott-setpoint": ThermostatSetpoint, "restart": Restart,
-                     "source-loss": SourceLoss, "odu-link-loss": OduLinkLoss, "dew-guard": DewGuard}
+                     "source-loss": SourceLoss, "odu-link-loss": OduLinkLoss, "dew-guard": DewGuard,
+                     "mqtt-reconnect": MqttReconnect, "energy-boundary": EnergyBoundary}
 
 ROOT = Path(__file__).resolve().parents[2]
 LAB = ROOT / ".tmp/native-spi"
@@ -149,7 +153,20 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         memory_reference=None, memory_max_drop_bytes=None,
         baseline_firmware_sha256=None, without_overlap=False, https_fixture=None, power_house_climate=None,
         assist_case=None, handover_variant=None, restart_case=None, ota_image=None, ota_python=None,
-        memory_export=None, export_min_rows=None, export_probe=False, export_seed=False, dew_case=None):
+        memory_export=None, export_min_rows=None, export_probe=False, export_seed=False, dew_case=None,
+        energy_case=None):
+    if scenario in ("mqtt-reconnect", "energy-boundary") and (network != "ethernet" or mode != "device"):
+        raise ValueError("Deze proef vereist de lokale Ethernet-fixture in device-modus")
+    if scenario == "mqtt-reconnect":
+        if memory_reference is not None:
+            raise ValueError("mqtt-reconnect rapporteert geheugen rond herstel zonder gespiegelde referentierun")
+        measure_memory = True
+    if scenario == "energy-boundary":
+        energy_case = energy_case or "hour"
+        if energy_case not in ENERGY_CASES:
+            raise ValueError("energy-boundary vereist een geldige --energy-case")
+    elif energy_case is not None:
+        raise ValueError("--energy-case hoort bij energy-boundary")
     if scenario == "dew-guard":
         if (dew_case is not None and dew_case not in DEW_CASES) or temperature != 18:
             raise ValueError("dew-guard gebruikt 18 °C PT1000 en een geldige dauwpuntvariant")
@@ -222,7 +239,7 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Invalid test scenario")
     if scenario in DYNAMIC_SCENARIOS and (mode != "device" or network == "failover"):
         raise ValueError("Dynamic scenarios require device mode on a stable Wi-Fi or Ethernet route")
-    if measure_memory and (mode != "device" or network == "failover" or scenario not in ("compatibility", "lowflow", "pr-memory", "https", "https-reject")):
+    if measure_memory and (mode != "device" or network == "failover" or scenario not in ("compatibility", "lowflow", "pr-memory", "https", "https-reject", "mqtt-reconnect")):
         raise ValueError("Memory recording is unsupported for this scenario or network route")
     if not 1024 <= base <= 65533:
         raise ValueError("Port base must be between 1024 and 65533")
@@ -232,8 +249,10 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
     if network != "wifi":
         ports["ethernet"] = base + 1
     ota_identity = ota_info(ota_image, info) if ota_image is not None else None
-    if restart_case:
+    if restart_case or energy_case:
         ports["control"] = base + 3
+    if scenario == "mqtt-reconnect":
+        ports["mqtt"] = base + 3
     if ota_identity:
         ports["ota"] = base + 4
     if max(ports.values()) > 65535:
@@ -245,13 +264,14 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
                          assist_case=assist_case, handover_variant=handover_variant, restart_case=restart_case,
                          ota_image=ota_image, ota_identity=ota_identity, ota_python=ota_python,
                          memory_export=memory_export, export_min_rows=export_min_rows, export_probe=export_probe,
-                         export_seed=export_seed, dew_case=dew_case)
+                         export_seed=export_seed, dew_case=dew_case, energy_case=energy_case)
 
 
 def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
               memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None, power_house_climate=None,
               assist_case=None, handover_variant=None, restart_case=None, ota_image=None,
-              ota_identity=None, ota_python=None, memory_export=None, export_min_rows=None, export_probe=False, export_seed=False, dew_case=None):
+              ota_identity=None, ota_python=None, memory_export=None, export_min_rows=None,
+              export_probe=False, export_seed=False, dew_case=None, energy_case=None):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -307,13 +327,13 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "--net", f"user,restrict=yes,hostfwd=tcp:127.0.0.1:{ports['http']}-:80",
         "--timeout", f"{seconds + 15}s", "--log-color", "never",
     ]
-    if restart_case:
+    if restart_case or energy_case:
         command.extend(("--control-tcp", f"127.0.0.1:{ports['control']}", "--save-state"))
     atomic_json(out / "command.json", command)
     env = dict(os.environ, RUST_LOG="warn")
     for key in ("OQ_NATIVE_GUEST_CLOCK", "OQ_NATIVE_OT_CONTROL", "DYLD_INSERT_LIBRARIES",
                 "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE",
-                "OQ_LOCAL_TLS_PORT", "OQ_LOCAL_EPOCH", "OQ_NATIVE_RTD_CONTROL",
+                "OQ_LOCAL_TLS_PORT", "OQ_LOCAL_EPOCH", "OQ_LOCAL_MQTT_PORT", "OQ_NATIVE_RTD_CONTROL",
                 "OQ_NATIVE_OTB_DISCONNECTED", "OQ_NATIVE_OTB_WATER_CONTROL",
                 "OQ_NATIVE_OTT_ROOM", "OQ_NATIVE_OTT_SETPOINT", "OQ_NATIVE_OTA_PORT"):
         env.pop(key, None)
@@ -347,8 +367,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     def odu_clock():
         return int((time.monotonic() - model_epoch) * 1000)
 
-    peer = RtuPeer(fleet, odu_clock if restart_case else guest_clock if mode == "device" else None)
-    dynamics = None
+    rebooting = bool(restart_case or energy_case)
+    peer = RtuPeer(fleet, odu_clock if rebooting else guest_clock if mode == "device" else None)
+    dynamics = mqtt = None
     if scenario in DYNAMIC_SCENARIOS:
         thermostat = out / "thermostat-heat"
         scenario_type = DYNAMIC_SCENARIOS[scenario]
@@ -364,6 +385,13 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             dynamics = DewGuard(thermostat, fleet, dew_case or "rise")
         elif scenario == "odu-link-loss":
             dynamics = OduLinkLoss(thermostat, fleet, peer)
+        elif scenario == "mqtt-reconnect":
+            broker = LocalBroker(ports["mqtt"], guest_clock)
+            dynamics = mqtt = MqttReconnect(thermostat, fleet, broker, ports["ethernet"], guest_clock)
+            env["OQ_LOCAL_MQTT_PORT"] = str(ports["mqtt"])
+        elif energy_case:
+            dynamics = EnergyBoundary(thermostat, fleet, energy_case, ports["control"], guest_clock)
+            env["OQ_LOCAL_EPOCH"] = str(dynamics.result["epoch"])
         elif restart_case:
             dynamics = Restart(thermostat, fleet, restart_case, ports, guest_clock,
                                ota_image, ota_identity, ota_python)
@@ -476,13 +504,13 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         })
         return data
 
-    def get(path, timeout=2, *, port=None, method="GET", any_status=False):
+    def get(path, timeout=2, *, port=None, method="GET", any_status=False, data=None):
         remaining = deadline - time.monotonic()
         if remaining <= 0 or _cancel_requested:
             return b"" if any_status else None
         port = probe.port if port is None else port
         request = urllib.request.Request(
-            f"http://127.0.0.1:{port}" + path, method=method, data=b"" if method == "POST" else None,
+            f"http://127.0.0.1:{port}" + path, method=method, data=(b"" if data is None else data) if method == "POST" else None,
         )
         try:
             opener = status_opener if any_status else openers[port]
@@ -511,9 +539,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             if guest_ms < pr_end_ms:
                 return
             windows = PR_WINDOWS
-        elif https:
-            windows = https.windows()
-            if windows is None:
+        elif https or mqtt:
+            windows = (https or mqtt).windows()
+            if windows is None or (mqtt and guest_ms < windows["reconnected"][1] + SAMPLE_SLACK_MS):
                 return
         elif scenario == "lowflow":
             if dynamics.result["stage"] != "complete":
@@ -544,12 +572,15 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             report["memory"]["error"] = "De download van de systeemrecorder is afgebroken na de tijdslimiet."
         except (OSError, EOFError, http.client.HTTPException, KeyError, TypeError, ValueError) as exc:
             report["memory"]["error"] = str(exc)
+        finally:
+            if mqtt:
+                mqtt.result["stage"] = "complete"
 
     web_setup_count = 0
 
     def inspect_web():
         nonlocal web_setup_count
-        if restart_case and report.get("setup_count", 0) != web_setup_count:
+        if rebooting and report.get("setup_count", 0) != web_setup_count:
             web_setup_count = report["setup_count"]
             verified_asset_ports.clear()
             report["web_assets_verified"] = False
@@ -600,6 +631,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 inspect_memory(port)
 
     try:
+        if mqtt:
+            mqtt.start(started, deadline, lambda: _cancel_requested or stop.is_set())
         if https_fixture:
             tls = TlsFixture(https_fixture, guest_clock)
             env.update(OQ_LOCAL_TLS_PORT=str(tls.port), OQ_LOCAL_EPOCH=str(tls.epoch))
@@ -615,7 +648,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         reader.start()
         atomic_json(LAB / "latest-run.json", {"run": str(out), "pid": process.pid})
         print(json.dumps({"run": str(out), "pid": process.pid, "mode": mode}), flush=True)
-        wait_for_owned_listeners(process, ports)
+        wait_for_owned_listeners(process, {kind: port for kind, port in ports.items() if kind != "mqtt"})
         if not _cancel_requested:
             peer.start(ports["uart1"])
         next_http = next_live = 0
@@ -652,11 +685,11 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     finally:
         # End the workload measurement before teardown.
         workload_ended = time.monotonic()
-        if restart_case:
+        if restart_case or mqtt:
             try:
                 dynamics.stop_workers()
             except Exception as exc:
-                error("restart cleanup", exc)
+                error("scenario workers cleanup", exc)
         report["elapsed_wall_s"] = workload_ended - started
         report["exit_before_cleanup"] = process.poll() if process else None
         report["emulator_stop_requested"] = False
@@ -746,7 +779,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             report["input_hash_unchanged"] = sha(firmware) == info["sha256"]
             final_flash = sha(flash)
             report["flash_file_unchanged"] = final_flash == info["sha256"]
-            if restart_case:
+            if rebooting:
                 report["flash_final_sha256"] = final_flash
                 report["flash_reset_path"] = "private_writable_copy"
         except OSError as exc:
@@ -765,6 +798,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                             ot_events.append(event)
                         elif event["kind"] == "ethernet":
                             probe.result["wire"] = event
+                        elif event["kind"] == "local-services":
+                            report["local_services"] = event
         except (ValueError, OSError, KeyError) as exc:
             error("native trace", exc)
 
@@ -852,6 +887,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed-forecast-export", action="store_true",
                         help="Vul de Vooruitblik-export via de aparte HIL-meetbuild")
     parser.add_argument("--dew-case", choices=DEW_CASES)
+    parser.add_argument("--energy-case", choices=ENERGY_CASES)
     args = parser.parse_args()
     try:
         reference = read_reference(args.memory_baseline) if args.memory_baseline is not None else None
@@ -874,7 +910,7 @@ if __name__ == "__main__":
             assist_case=args.assist_case, handover_variant=args.handover_variant,
             restart_case=args.restart_case, ota_image=args.ota_image, ota_python=args.ota_python,
             memory_export=args.memory_export, export_min_rows=args.export_min_rows, export_probe=args.export_probe,
-            export_seed=args.seed_forecast_export, dew_case=args.dew_case,
+            export_seed=args.seed_forecast_export, dew_case=args.dew_case, energy_case=args.energy_case,
         ))
     except ValueError as exc:
         parser.error(str(exc))

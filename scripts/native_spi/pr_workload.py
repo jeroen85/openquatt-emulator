@@ -16,14 +16,21 @@ SSE_LIMIT_BYTES = 8 * 1024 * 1024
 ASSET_LIMIT_BYTES = 2 * 1024 * 1024
 
 
-def plan(without_overlap):
-    sse_end, get_start = (147000, 150000) if without_overlap else (179000, 124000)
+def plan(without_overlap, *, offset_ms=0, extend_ms=0):
+    sse_end, get_start = (147000, 150000) if without_overlap else (179000 + extend_ms, 124000)
+    before_start, load_start = WINDOWS["before"]
+    load_end, after_end = WINDOWS["after"]
+    windows = {
+        "before": [before_start + offset_ms, load_start + offset_ms],
+        "load": [load_start + offset_ms, load_end + offset_ms + extend_ms],
+        "after": [load_end + offset_ms + extend_ms, after_end + offset_ms + extend_ms],
+    }
     return {
         "profile": "q-duo-wifi-web-v1",
         "mode": "sequential" if without_overlap else "overlap",
-        "windows_ms": {name: list(window) for name, window in WINDOWS.items()},
-        "sse_window_ms": [120000, sse_end],
-        "get_targets_ms": list(range(get_start, 178000, GET_PERIOD_MS)),
+        "windows_ms": windows,
+        "sse_window_ms": [windows["load"][0], sse_end + offset_ms],
+        "get_targets_ms": list(range(get_start + offset_ms, windows["load"][1] - 2000, GET_PERIOD_MS)),
         "max_start_lag_ms": MAX_START_LAG_MS,
         "max_sse_event_gap_ms": SSE_MAX_EVENT_GAP_MS,
         "clock": "guest_systimer_ms",
@@ -46,7 +53,8 @@ def summarize_workload(schedule, sse, gets, background, ready_ms):
             confirmed.append(item["target_ms"])
 
     issues = []
-    if ready_ms is None or ready_ms >= READY_BY_MS:
+    before, after = schedule["windows_ms"]["before"], schedule["windows_ms"]["after"]
+    if ready_ms is None or ready_ms >= before[0]:
         issues.append("De web-app was niet op tijd klaar voor het rustvenster.")
     if background:
         issues.append("Een gewone webprobe liep door in het meetvenster.")
@@ -57,10 +65,10 @@ def summarize_workload(schedule, sse, gets, background, ready_ms):
           or sse["max_event_gap_ms"] > SSE_MAX_EVENT_GAP_MS
           or not opened["host_ms"] <= first["host_ms"] <= last["host_ms"] <= closed["host_ms"]):
         issues.append("De SSE-stream had onvoldoende dekking in het geplande venster.")
-    if closed and closed["guest_ms"] >= WINDOWS["after"][0]:
+    if closed and closed["guest_ms"] >= after[0]:
         issues.append("De SSE-client liep door in het herstelvenster.")
     if ([item["target_ms"] for item in successful] != targets
-            or any(item["closed"]["guest_ms"] >= WINDOWS["after"][0] for item in successful)):
+            or any(item["closed"]["guest_ms"] >= after[0] for item in successful)):
         issues.append("Niet alle geplande GET-verzoeken zijn op tijd geslaagd.")
     if schedule["mode"] == "sequential":
         issues.append("De controleproef plant SSE en GET na elkaar." if not socket_overlaps
@@ -75,8 +83,11 @@ def summarize_workload(schedule, sse, gets, background, ready_ms):
 
 
 class PrWebLoad:
-    def __init__(self, port, guest_clock, started, deadline, cancelled, without_overlap, export=None):
-        self.schedule = plan(without_overlap)
+    def __init__(self, port, guest_clock, started, deadline, cancelled, without_overlap, export=None,
+                 *, schedule=None, sse_timeout_s=75, get_timeout_s=3):
+        self.schedule = plan(without_overlap) if schedule is None else schedule
+        self.sse_timeout_s = sse_timeout_s
+        self.get_timeout_s = get_timeout_s
         self.export = export
         if export:
             self.schedule = {**self.schedule, "export": export.plan}
@@ -103,7 +114,7 @@ class PrWebLoad:
         return False
 
     def ready(self, guest_ms):
-        if self.ready_ms is not None or guest_ms >= READY_BY_MS:
+        if self.ready_ms is not None or guest_ms >= self.schedule["windows_ms"]["before"][0]:
             return
         self.ready_ms = guest_ms
         targets = (self.run_sse, self.run_gets, self.run_export) if self.export else (self.run_sse, self.run_gets)
@@ -129,7 +140,7 @@ class PrWebLoad:
             row["outcome"] = "missed_start"
             return
         at_end = lambda: self.guest_clock() >= end_ms
-        deadline = min(self.deadline, time.monotonic() + (75 if sse else timeout))
+        deadline = min(self.deadline, time.monotonic() + (self.sse_timeout_s if sse else timeout))
         row["outcome"] = "error"
         try:
             with bounded_response(self.port, row["path"], deadline, lambda: self.stopped() or at_end(),
@@ -181,10 +192,12 @@ class PrWebLoad:
         for target in self.schedule["get_targets_ms"]:
             row = {"path": "/0.js", "target_ms": target, "outcome": "not_run"}
             self.gets.append(row)
-            self.request(row, target, min(target + GET_PERIOD_MS, WINDOWS["load"][1]), self.read_asset)
+            self.request(row, target, min(target + GET_PERIOD_MS, self.schedule["windows_ms"]["load"][1]),
+                         self.read_asset, timeout=self.get_timeout_s)
 
     def read_asset(self, row, response):
         body = response.read(ASSET_LIMIT_BYTES + 1)
-        if not 1000 < len(body) <= ASSET_LIMIT_BYTES:
-            raise ValueError("Ongeldige grootte van webbundel")
+        length = response.getheader("Content-Length")
+        if not 1000 < len(body) <= ASSET_LIMIT_BYTES or (length is not None and len(body) != int(length)):
+            raise ValueError("Onvolledige of ongeldige webbundel")
         row["last_byte"], row["wire_bytes"] = self.stamp(), len(body)

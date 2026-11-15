@@ -57,6 +57,31 @@ int main() {
     ntp[42] = 0x23;
     ntp[82] = 0x43;
     check(local.outgoing(ntp, reply) && local.ntp_count == 1 && response.size() == 90 && response[66] == 0x43);
+    const uint32_t initial_ntp_time = (uint32_t(response[82]) << 24) | (uint32_t(response[83]) << 16) |
+                                     (uint32_t(response[84]) << 8) | response[85];
+    LocalServices energy(0, 1794160000);
+    check(energy.outgoing(ntp, reply, 31) && energy.ntp_count == 1);
+    const uint32_t advanced_ntp_time = (uint32_t(response[82]) << 24) | (uint32_t(response[83]) << 16) |
+                                      (uint32_t(response[84]) << 8) | response[85];
+    check(advanced_ntp_time - initial_ntp_time == 31);
+    auto disabled_mqtt = packet(6, 40000, 1883);
+    check(energy.outgoing(disabled_mqtt, reply));
+
+    LocalServices mqtt(0, 0, 19500);
+    auto connection = packet(6, 40000, 1883);
+    check(!mqtt.outgoing(connection, reply) && connection[36] * 256 + connection[37] == 19500);
+    auto external = packet(6, 40000, 1883);
+    external[33] = 10;
+    check(mqtt.outgoing(external, reply));
+    auto not_tls = packet(6, 40000, 443);
+    check(mqtt.outgoing(not_tls, reply));
+    check(mqtt.outgoing(ntp, reply) && mqtt.ntp_count == 0);
+    auto inbound = packet(6, 19500, 40000);
+    inbound[29] = 2;
+    inbound[33] = 15;
+    mqtt.incoming(inbound);
+    check(inbound[34] * 256 + inbound[35] == 1883);
+
     Bytes query(12, 0);
     query[5] = 1;
     for (auto label : {std::string("api"), std::string("open-meteo"), std::string("com")}) {
