@@ -54,6 +54,12 @@ class EthernetLan {
     slirp_.reset(slirp_new(&config, &callbacks_, this));
     if (!slirp_ || slirp_add_hostfwd(slirp_.get(), 0, ip("127.0.0.1"), port, config.vdhcp_start, 80) != 0)
       throw std::runtime_error("Unable to listen on the W5500 HTTP port");
+    if (const char* ota = std::getenv("OQ_NATIVE_OTA_PORT")) {
+      const long ota_port = std::strtol(ota, nullptr, 10);
+      if (ota_port < 1024 || ota_port > 65535 ||
+          slirp_add_hostfwd(slirp_.get(), 0, ip("127.0.0.1"), ota_port, config.vdhcp_start, 3232) != 0)
+        throw std::runtime_error("Unable to listen on the W5500 OTA port");
+    }
     chip_.transmit = [this](const uint8_t* data, size_t size) {
       LocalServices::Bytes packet;
       if (local_) {

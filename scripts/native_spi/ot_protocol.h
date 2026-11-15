@@ -69,6 +69,7 @@ inline float decode_f88(uint16_t value) { return static_cast<float>(static_cast<
 
 struct Boiler {
   float target_c{0.0f};
+  float boiler_water_c{42.5f};
   float maximum_modulation{100.0f};
   bool ch_enabled{false};
 
@@ -126,7 +127,7 @@ struct Boiler {
         value = f88(1.5f);
         break;
       case 25:
-        value = f88(42.5f);
+        value = f88(boiler_water_c);
         break;
       case 26:
         value = f88(48.0f);

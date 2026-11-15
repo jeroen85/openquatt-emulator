@@ -3,7 +3,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include "ot_protocol.h"
@@ -58,7 +60,17 @@ class RmtPeers {
       return;
     }
     event("controller-tx", boiler ? "otb" : "ott", channel, decoded.word, now);
-    if (boiler) {
+    if (boiler && !std::getenv("OQ_NATIVE_OTB_DISCONNECTED")) {
+      if (decoded.id == 25) {
+        if (const char* path = std::getenv("OQ_NATIVE_OTB_WATER_CONTROL")) {
+          if (FILE* file = std::fopen(path, "r")) {
+            float next;
+            if (std::fscanf(file, "%f", &next) == 1 && std::isfinite(next) && next >= 0 && next <= 80)
+              boiler_.boiler_water_c = next;
+            std::fclose(file);
+          }
+        }
+      }
       boiler_answer_ = boiler_.respond(decoded);
       boiler_due_ = now + 110000;  // 34 ms TX followed by 76 ms response delay.
       boiler_expires_ = now + 400000;
@@ -84,8 +96,8 @@ class RmtPeers {
       const std::array<uint32_t, 4> frames = {
           ot::frame(0, 0, heating() ? 0x0100u : 0u),
           ot::frame(1, 1, ot::f88(40.0f)),
-          ot::frame(1, 16, ot::f88(21.0f)),
-          ot::frame(1, 24, ot::f88(19.0f)),
+          ot::frame(1, 16, ot::f88(thermostat_input("OQ_NATIVE_OTT_SETPOINT", 21.0f))),
+          ot::frame(1, 24, ot::f88(thermostat_input("OQ_NATIVE_OTT_ROOM", 19.0f))),
       };
       if (inject(bus, 21, frames[thermostat_index_], "ott", now)) {
         thermostat_index_ = (thermostat_index_ + 1) % frames.size();
@@ -122,6 +134,18 @@ class RmtPeers {
     T value;
     std::memcpy(&value, bytes + offset, sizeof(value));
     return value;
+  }
+
+  static float thermostat_input(const char* key, float fallback) {
+    const char* path = std::getenv(key);
+    if (!path) return fallback;
+    if (FILE* file = std::fopen(path, "r")) {
+      float next;
+      if (std::fscanf(file, "%f", &next) == 1 && std::isfinite(next) && next >= 0 && next <= 40)
+        fallback = next;
+      std::fclose(file);
+    }
+    return fallback;
   }
 
   bool heating() const {

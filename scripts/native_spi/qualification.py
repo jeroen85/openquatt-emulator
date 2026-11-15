@@ -24,6 +24,16 @@ def qualify(report):
         "spi": (not report.get("model_errors"), "Het native SPI/DMA-model meldde een fout."),
         "completed": (not report.get("cancelled"), "De proef is handmatig gestopt."),
     }
+    restart = report.get("scenario") == "restart"
+    if restart:
+        gates["input"] = (report.get("input_hash_unchanged") is True,
+                          "De oorspronkelijke factory-bin is gewijzigd.")
+        gates["persistent_flash"] = (report.get("flash_file_unchanged") is False
+                                      and report.get("flash_final_sha256") is not None,
+                                      "De schrijfbare testflash bevat geen aantoonbare wijziging.")
+    if report.get("scenario") in ("restart", "defrost-assist", "ott-setpoint"):
+        gates["duration"] = (report.get("functional_completion") is True,
+                             "De fase en haar eindvenster zijn niet voltooid binnen de ingestelde duur.")
     network = report.get("network", {})
     if network.get("mode") in ("ethernet", "failover"):
         wire = network.get("wire", {})
@@ -46,7 +56,7 @@ def qualify(report):
             and wire.get("cable") is False and wire.get("link") is False,
             "De terugval van Ethernet naar Wi-Fi is niet aangetoond.",
         )
-    if report.get("mode") == "device":
+    if report.get("mode") == "device" and not restart:
         samples = [row["at_ms"] for row in peer.get("recent", []) if "at_ms" in row]
         odu_ms = report.get("odu_uptime_ms", 0)
         guest_ms = report.get("guest_uptime_ms", 0)
@@ -62,6 +72,10 @@ def qualify(report):
             ("ott", {0, 16, 24}, "thermostaatuitwisseling op OTT"),
             ("otb", {0, 1, 25}, "keteluitwisseling op OTB"),
         ):
+            if restart and dynamics.get("case") != "running":
+                continue  # Standby reset scenarios exercise flash and network lifecycle.
+            if link == "otb" and report.get("scenario") == "defrost-assist" and dynamics.get("case") != "ot":
+                continue  # Virtual OpenTherm boiler is physically absent in relay profiles.
             evidence = wire.get(link, {})
             last_ack_ms = evidence.get("last_ack_ms")
             gates[link] = (
@@ -70,7 +84,7 @@ def qualify(report):
                 f"De {description} is onvolledig of stopte vóór het einde van de proef.",
             )
         gates["dynamics"] = (dynamics["stage"] == "complete", "De dynamische proef is onvolledig.")
-        if "version" in dynamics:
+        if "version" in dynamics or restart:
             gates["wire_history"] = (peer.get("write_history_complete") is True,
                                      "De Modbus-schrijfhistorie is onvolledig; vroege opdrachten ontbreken.")
             if report.get("scenario") in ("heating-curve", "odu-response", "odu-transients", "power-house"):
@@ -84,6 +98,8 @@ def qualify(report):
             if dynamics.get("violation"):
                 gates["scenario_violation"] = (False, dynamics["violation"])
         if "lowflow" in dynamics:
+            gates["wire_history"] = (peer.get("write_history_complete") is True,
+                                     "De Modbus-schrijfhistorie is onvolledig; vroege opdrachten ontbreken.")
             gates.update(lowflow_gates(dynamics, report.get("writes", [])))
     if "memory" in report:
         memory = report["memory"]
@@ -95,6 +111,9 @@ def qualify(report):
         gates["https_evidence"] = (bool(checks), "De HTTPS-eindcontrole ontbreekt.")
         for key, ok in checks.items():
             gates["https_" + key] = (ok is True, f"HTTPS-controle faalt: {key}.")
+    if "export_memory" in report:
+        for key, ok in report["export_memory"]["checks"].items():
+            gates["export_" + key] = (ok is True, f"Exportcontrole faalt: {key}.")
     if "pr_memory" in report:
         pr = report["pr_memory"]
         workload = pr["workload"]

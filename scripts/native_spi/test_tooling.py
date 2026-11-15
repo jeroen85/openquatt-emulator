@@ -424,6 +424,56 @@ class LowflowEvidence(unittest.TestCase):
         self.assertEqual(scenario.result["stage"], "wait_restart")
         self.assertFalse(matches_timer(scenario.evidence["recovery_elapsed_window_ms"], RECOVER_MS))
 
+    @staticmethod
+    def restart_sample(when, flow, *, mode="CM1 - Preflow/Postflow", fault=False, level=0):
+        return {
+            "guest_ms": when, "observed_from_ms": when - 100,
+            "firmware": {"ott_valid": True, "heat": True, "flow_lph": flow, "lowflow_fault": fault,
+                         "mode": mode, "defrost": False, "valve": False, "frequency_hz": [0, 0]},
+            "odus": [{"requested_level": level, "requested_mode": "standby", "frequency_hz": 0, "flow_lph": flow}] * 2,
+        }
+
+    def test_restart_records_a_dip_during_standby_and_preflow_until_flow_returns(self):
+        from .lowflow import Lowflow
+
+        scenario = Lowflow(None, None)
+        scenario.result["stage"] = "wait_restart"
+        scenario.previous = self.restart_sample(510000, 800)
+        first = self.restart_sample(512000, 110.004, mode="CM0 - Standby")
+        second = self.restart_sample(514000, 90)
+        restored = self.restart_sample(516000, 500)
+        for sample in (first, second, restored):
+            scenario.observe_flow(None, "wait_restart", sample, 0)
+        self.assertEqual(scenario.evidence["restart_flow_dips"], [{
+            "from_ms": 509900, "first_below_threshold": first, "restored": restored,
+        }])
+        self.assertEqual(scenario.result["stage"], "wait_restart")
+
+    def test_restart_dip_rejects_compressor_activity_or_latched_fault(self):
+        from .lowflow import Lowflow
+
+        for sample, message in (
+            (self.restart_sample(512000, 110, level=1), "buiten veilige stilstand"),
+            (self.restart_sample(512000, 110, mode="CM2 - Heating"), "buiten veilige stilstand"),
+            (self.restart_sample(512000, 110, fault=True), "De lowflowfout keerde terug"),
+        ):
+            with self.subTest(sample=sample), self.assertRaisesRegex(RuntimeError, message):
+                Lowflow(None, None).observe_flow(None, "wait_restart", sample, 0)
+
+    def test_unknown_flow_is_not_a_safe_standby_dip(self):
+        from .lowflow import Lowflow
+
+        for flow in (None, "NaN", float("nan"), -1):
+            with self.subTest(flow=flow), self.assertRaisesRegex(RuntimeError, "Ontbrekende flow"):
+                Lowflow(None, None).observe_flow(None, "wait_restart", self.restart_sample(510000, flow), 0)
+
+    def test_restart_rejects_even_a_hidden_command_during_a_measured_flow_dip(self):
+        self.dynamics["lowflow"]["restart_flow_dips"] = [
+            {"from_ms": 620000, "restored": {"guest_ms": 636000}},
+        ]
+        self.assertFalse(self.gates()["lowflow_restart"])
+        self.assertEqual(self.dynamics["lowflow"]["commands_during_restart_flow_dips"], self.writes[-2:])
+
     def test_timer_intervals_reject_early_late_and_imprecise_measurements(self):
         from .lowflow import matches_timer
 

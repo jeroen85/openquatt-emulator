@@ -5,6 +5,7 @@ from pathlib import Path
 from statistics import median
 
 from .memory import SAMPLE_SLACK_MS, summarize
+from .export_memory import compare_exports
 from .memory_comparison import compare, read_report, read_reference, require_match, runtime_fingerprint, settings
 from .pr_workload import WINDOWS
 
@@ -77,6 +78,8 @@ def assessment(candidate, reference=None, expected_baseline=None, max_drop_bytes
         a, b = (item["workload"]["sse"]["events"] for item in (before, after))
         if abs(a - b) > max(3, 0.10 * max(a, b)):
             raise ValueError(f"Het aantal ontvangen SSE-events verschilt te veel ({a} tegenover {b}).")
+        if after["plan"].get("export"):
+            result["export_comparison"] = compare_exports(baseline["export_memory"], candidate["export_memory"])
         deltas = compare(reference, candidate, None, True)["phases"]
         if any(data["reference_window_ms"] != list(WINDOWS[name])
                or data["candidate_window_ms"] != list(WINDOWS[name]) for name, data in deltas.items()):
@@ -131,6 +134,19 @@ def markdown(result, trial):
              SCOPE, "", f"- Kandidaat SHA-256 `{result['candidate_firmware_sha256']}`",
              f"- Aangetoonde overlap bij {len(workload['confirmed_overlap_targets_ms'])} GET-verzoeken",
              "- Stackmarges en allocatiefouten onbekend voor de factory-bin."]
+    if trial.get("export"):
+        export = trial["export"]
+        request = export["request"]
+        count = request.get("payload", {}).get("rows")
+        during = export["phases"].get("during", {}).get("sample_count", 0)
+        lines.append(f"- Export `{request['path']}`, {count if count is not None else 'onbekend'} rijen, "
+                     f"{during} meetpunten tijdens de overdracht.")
+        if export["httpd_stack_available"]:
+            stack = export["phases"]["during"]["min_b"]["httpd_stack_b"]
+            lines.append(f"- Laagste gemeten virtuele HTTPD-stackreserve tijdens de export {stack} B.")
+        if export["largest_psram_block_available"]:
+            block = export["phases"]["during"]["min_b"]["largest_psram_block_b"]
+            lines.append(f"- Kleinste gemeten grootste vrije PSRAM-blok tijdens de export {block} B.")
     if result["sample_interval_ms"]:
         lines.append(f"- De recorder meet elke {result['sample_interval_ms'] // 1000} s. Korte dips kunnen tussen meetpunten vallen.")
     if result.get("reference_report_sha256"):

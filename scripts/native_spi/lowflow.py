@@ -1,6 +1,7 @@
 """Low-flow interruption during defrost, using the unmodified Q Duo firmware."""
 
 import json
+import math
 
 from .dynamics import Dynamics, at_least, near
 
@@ -72,7 +73,9 @@ class Lowflow(Dynamics):
         evidence = self.evidence
         last = self.previous
         self.previous = sample
-        if fw["ott_valid"] is not True or fw["heat"] is None or fw["lowflow_fault"] is None or fw["flow_lph"] is None:
+        flow = fw["flow_lph"]
+        if (fw["ott_valid"] is not True or type(fw["heat"]) is not bool or type(fw["lowflow_fault"]) is not bool
+                or type(flow) not in (int, float) or not math.isfinite(flow) or flow < 0):
             raise RuntimeError("Ontbrekende flow- of thermostaatfeedback tijdens de lowflowproef")
         if fw["heat"] is not True:
             raise RuntimeError("Warmtevraag viel weg tijdens de lowflowproef")
@@ -141,8 +144,21 @@ class Lowflow(Dynamics):
             elif "flow_restored" in points or fw["lowflow_fault"] is False:
                 raise RuntimeError("Flow bleef niet geldig tot aan de vrijgave van de lowflowfout")
         elif stage == "wait_restart":
-            if fw["lowflow_fault"] is not False or not healthy:
+            if fw["lowflow_fault"] is not False:
                 raise RuntimeError("De lowflowfout keerde terug tijdens het wachten op herstart")
+            dips = evidence.setdefault("restart_flow_dips", [])
+            if not healthy:
+                standby = (fw["mode"] or "").split(" ", 1)[0] in ("CM0", "CM1")
+                if not (standby and self.stopped(sample) and fw["defrost"] is False and fw["valve"] is False):
+                    raise RuntimeError(
+                        f"Flow {fw['flow_lph']:g} L/h vóór herstart buiten veilige stilstand "
+                        f"(drempel {MIN_FLOW_LPH} L/h, lowflowfout uit)"
+                    )
+                if not dips or "restored" in dips[-1]:
+                    dips.append({"from_ms": last["observed_from_ms"], "first_below_threshold": sample})
+                return
+            if dips and "restored" not in dips[-1]:
+                dips[-1]["restored"] = sample
             if self.has_flow(sample) and self.heating(sample, index):
                 event = event_for(get, "hp_start_confirmed", f"HP{index + 1}", evidence["clear_window_ms"][0])
                 if event:
@@ -161,7 +177,9 @@ def lowflow_gates(dynamics, writes):
     stop_commands = {}
     prohibited = []
     early_peer_restarts = []
+    first_restart_commands = {}
     restart_command = None
+    commands_during_flow_dips = []
 
     if fault_event and stop_event and clear:
         fault_ms = fault_event["uptime_s"] * 1000
@@ -183,9 +201,14 @@ def lowflow_gates(dynamics, writes):
                         stop_commands.setdefault(register, row)
             # Include retries and writes inside the uncertainty of either fault edge.
             enables = (level is not None and level > 0) or mode in (1, 2, 4)
+            if enables and any(
+                    dip["from_ms"] <= when <= dip.get("restored", {}).get("guest_ms", float("inf"))
+                    for dip in evidence.get("restart_flow_dips", [])):
+                commands_during_flow_dips.append(row)
             if enables and fault_ms <= when < clear[1]:
                 prohibited.append(row)
             if enables and when >= stop_ms:
+                first_restart_commands.setdefault(row["unit"], row)
                 if row["unit"] == unit and restart_command is None:
                     restart_command = row
                 # The joint stop sample is the latest possible stop of the other unit.
@@ -195,6 +218,8 @@ def lowflow_gates(dynamics, writes):
         evidence["positive_writes_while_latched"] = prohibited
         evidence["early_peer_restart_writes"] = early_peer_restarts
         evidence["first_restart_command"] = restart_command
+        evidence["first_restart_commands"] = first_restart_commands
+        evidence["commands_during_restart_flow_dips"] = commands_during_flow_dips
         if restart_command:
             command_ms = restart_command["at_ms"]
             evidence["off_time_at_restart_command_window_ms"] = elapsed_window(
@@ -222,7 +247,9 @@ def lowflow_gates(dynamics, writes):
         "lowflow_restart": (
             restart_command is not None and restart_command["at_ms"] >= clear[1]
             and evidence["off_time_at_restart_command_window_ms"][0] >= MIN_OFF_MS
-            and not early_peer_restarts and "restart" in points,
+            and not early_peer_restarts and not commands_during_flow_dips
+            and all("restored" in dip for dip in evidence.get("restart_flow_dips", []))
+            and "restart" in points,
             "De compressorherstart na vrijgave en minimum-uit-tijd is onvoldoende aangetoond.",
         ),
     }

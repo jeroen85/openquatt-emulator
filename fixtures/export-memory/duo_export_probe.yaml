@@ -1,0 +1,16 @@
+packages:
+  controller: !include duo.yaml
+esphome:
+  compile_process_limit: 2
+  includes:
+    - export_probe.h
+interval:
+  - interval: 100ms
+    startup_delay: 84s
+    then:
+      - lambda: oq_virtual_export::sample();
+button:
+  - platform: template
+    name: "HIL Seed Forecast Recording"
+    on_press:
+      - lambda: oq_virtual_export::seed(id(oq_weather_experiment));

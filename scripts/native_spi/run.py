@@ -44,12 +44,18 @@ from .odu_scenarios import ResponseFleet, OduResponse, OduTransients
 from .https_fixture import TlsFixture
 from .https_scenario import HttpsScenario
 from .power_house import PowerHouse, CLIMATES
+from .defrost_assist import DefrostAssist, ASSIST_CASES, HANDOVER_VARIANTS
+from .thermostat_setpoint import ThermostatSetpoint
+from .restart import Restart, RESTART_CASES, ota_info
+from .export_memory import ExportMeasurement, EXPORT_PATHS
 
 SCENARIOS = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240,
              "heating-curve": 2400, "odu-response": 2100, "odu-transients": 2100,
-             "https": 420, "https-reject": 240, "power-house": 2700}
+             "https": 420, "https-reject": 240, "power-house": 2700,
+             "defrost-assist": 1800, "ott-setpoint": 210, "restart": 340}
 DYNAMIC_SCENARIOS = {"dynamics": Dynamics, "lowflow": Lowflow, "heating-curve": HeatingCurve,
-                     "odu-response": OduResponse, "odu-transients": OduTransients, "power-house": PowerHouse}
+                     "odu-response": OduResponse, "odu-transients": OduTransients, "power-house": PowerHouse,
+                     "defrost-assist": DefrostAssist, "ott-setpoint": ThermostatSetpoint, "restart": Restart}
 
 ROOT = Path(__file__).resolve().parents[2]
 LAB = ROOT / ".tmp/native-spi"
@@ -138,7 +144,34 @@ def wait_for_owned_listeners(process, ports):
 def run(firmware, seconds=90, mode="device", base=19460, name="factory", temperature=30.0,
         network="wifi", scenario="compatibility", measure_memory=False, *,
         memory_reference=None, memory_max_drop_bytes=None,
-        baseline_firmware_sha256=None, without_overlap=False, https_fixture=None, power_house_climate=None):
+        baseline_firmware_sha256=None, without_overlap=False, https_fixture=None, power_house_climate=None,
+        assist_case=None, handover_variant=None, restart_case=None, ota_image=None, ota_python=None,
+        memory_export=None, export_min_rows=None, export_probe=False, export_seed=False):
+    if memory_export is not None:
+        if (scenario != "pr-memory" or memory_export not in EXPORT_PATHS or without_overlap
+                or (export_seed and memory_export != "forecast")
+                or (export_min_rows is not None and (type(export_min_rows) is not int or export_min_rows < 1))):
+            raise ValueError("Een exportmeting vereist pr-memory met overlap en een geldige exportkeuze")
+    elif export_min_rows is not None or export_probe or export_seed:
+        raise ValueError("Exportopties vereisen --memory-export")
+    if scenario == "restart":
+        restart_case = restart_case or "hard"
+        if restart_case not in RESTART_CASES or network != "ethernet":
+            raise ValueError("restart vereist een bekende herstartvariant en Ethernet")
+        if restart_case == "ota":
+            if ota_image is None or not ota_image.is_file() or ota_python is None or not ota_python.is_file():
+                raise ValueError("OTA vereist --ota-image en --ota-python met ESPHome")
+        elif ota_image is not None or ota_python is not None:
+            raise ValueError("OTA-opties horen bij --restart-case ota")
+    elif any(v is not None for v in (restart_case, ota_image, ota_python)):
+        raise ValueError("Herstartopties horen bij restart")
+    if scenario == "defrost-assist":
+        if (assist_case not in ASSIST_CASES or network != "ethernet" or temperature != 34
+                or (handover_variant is not None and (assist_case != "handover"
+                    or handover_variant not in HANDOVER_VARIANTS))):
+            raise ValueError("defrost-assist vereist Ethernet, 34 °C en een passend --assist-case")
+    elif assist_case is not None or handover_variant is not None:
+        raise ValueError("Ketelproefopties horen bij defrost-assist")
     if power_house_climate is not None and (scenario != "power-house" or power_house_climate not in CLIMATES):
         raise ValueError("--power-house-climate requires power-house and a known climate profile")
     if scenario.startswith("https"):
@@ -190,13 +223,27 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
     ports = {"http": base, "uart1": base + 2}
     if network != "wifi":
         ports["ethernet"] = base + 1
+    ota_identity = ota_info(ota_image, info) if ota_image is not None else None
+    if restart_case:
+        ports["control"] = base + 3
+    if ota_identity:
+        ports["ota"] = base + 4
+    if max(ports.values()) > 65535:
+        raise ValueError("Poortreeks overschrijdt 65535")
     with reserve_ports(ports):
         return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
-                         memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture, power_house_climate)
+                         memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap,
+                         https_fixture=https_fixture, power_house_climate=power_house_climate,
+                         assist_case=assist_case, handover_variant=handover_variant, restart_case=restart_case,
+                         ota_image=ota_image, ota_identity=ota_identity, ota_python=ota_python,
+                         memory_export=memory_export, export_min_rows=export_min_rows, export_probe=export_probe,
+                         export_seed=export_seed)
 
 
 def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
-              memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None, power_house_climate=None):
+              memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None, power_house_climate=None,
+              assist_case=None, handover_variant=None, restart_case=None, ota_image=None,
+              ota_identity=None, ota_python=None, memory_export=None, export_min_rows=None, export_probe=False, export_seed=False):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -222,7 +269,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "native_build": native_build, "extension_sha256": sha(extension) if extension else None,
         "executable_sha256": sha(executable), "odu_library_sha256": sha(odu_library), "network": probe.result,
     }
-    if scenario not in ("compatibility", "dynamics", "lowflow", "pr-memory"):
+    if memory_export or scenario not in ("compatibility", "dynamics", "pr-memory"):
         report["source_snapshot"] = "scenario-source"
         source_root = out / report["source_snapshot"]
         source_root.mkdir()
@@ -249,11 +296,15 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "--net", f"user,restrict=yes,hostfwd=tcp:127.0.0.1:{ports['http']}-:80",
         "--timeout", f"{seconds + 15}s", "--log-color", "never",
     ]
+    if restart_case:
+        command.extend(("--control-tcp", f"127.0.0.1:{ports['control']}", "--save-state"))
     atomic_json(out / "command.json", command)
     env = dict(os.environ, RUST_LOG="warn")
     for key in ("OQ_NATIVE_GUEST_CLOCK", "OQ_NATIVE_OT_CONTROL", "DYLD_INSERT_LIBRARIES",
                 "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE",
-                "OQ_LOCAL_TLS_PORT", "OQ_LOCAL_EPOCH"):
+                "OQ_LOCAL_TLS_PORT", "OQ_LOCAL_EPOCH", "OQ_NATIVE_RTD_CONTROL",
+                "OQ_NATIVE_OTB_DISCONNECTED", "OQ_NATIVE_OTB_WATER_CONTROL",
+                "OQ_NATIVE_OTT_ROOM", "OQ_NATIVE_OTT_SETPOINT", "OQ_NATIVE_OTA_PORT"):
         env.pop(key, None)
     trace = out / "mmio.jsonl"
     if extension:
@@ -261,6 +312,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                    OQ_NATIVE_SPI_MODE=mode, OQ_NATIVE_RTD_C=str(temperature))
     if network != "wifi":
         env.update(OQ_W5500_PORT=str(ports["ethernet"]), OQ_W5500_CABLE=str(cable))
+
+    if ota_identity:
+        env["OQ_NATIVE_OTA_PORT"] = str(ports["ota"])
 
     clock_path = out / "guest-clock.bin"
     if mode == "device":
@@ -277,13 +331,31 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             raise ValueError("HTTPS success test requires the factory bin bound to this test CA fixture")
 
     fleet = (ResponseFleet if scenario.startswith("odu-") else model.OduFleet)(odu_library)
-    peer = RtuPeer(fleet, guest_clock if mode == "device" else None)
+    model_epoch = time.monotonic()
+
+    def odu_clock():
+        return int((time.monotonic() - model_epoch) * 1000)
+
+    peer = RtuPeer(fleet, odu_clock if restart_case else guest_clock if mode == "device" else None)
     dynamics = None
     if scenario in DYNAMIC_SCENARIOS:
         thermostat = out / "thermostat-heat"
         scenario_type = DYNAMIC_SCENARIOS[scenario]
-        dynamics = (PowerHouse(thermostat, fleet, power_house_climate or "mild") if scenario == "power-house"
-                    else scenario_type(thermostat, fleet))
+        if scenario == "power-house":
+            dynamics = PowerHouse(thermostat, fleet, power_house_climate or "mild")
+        elif scenario == "defrost-assist":
+            dynamics = DefrostAssist(thermostat, fleet, assist_case, handover_variant or "demand-drop")
+            env.update(OQ_NATIVE_RTD_CONTROL=str(dynamics.rtd),
+                       OQ_NATIVE_OTB_WATER_CONTROL=str(dynamics.boiler_water))
+            if assist_case != "ot":
+                env["OQ_NATIVE_OTB_DISCONNECTED"] = "1"
+        elif restart_case:
+            dynamics = Restart(thermostat, fleet, restart_case, ports, guest_clock,
+                               ota_image, ota_identity, ota_python)
+        else:
+            dynamics = scenario_type(thermostat, fleet)
+        if scenario == "ott-setpoint":
+            env.update(OQ_NATIVE_OTT_SETPOINT=str(dynamics.setpoint), OQ_NATIVE_OTT_ROOM=str(dynamics.room))
         dynamics.set_heat(False)
         env["OQ_NATIVE_OT_CONTROL"] = str(thermostat)
         report["dynamics"] = dynamics.result
@@ -293,8 +365,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     deadline = started + seconds
     stop = threading.Event()
     report_lock = threading.RLock()
+    export = ExportMeasurement(memory_export, export_min_rows or 1, export_probe, export_seed) if memory_export else None
     pr_load = (PrWebLoad(ports["http"], guest_clock, started, deadline,
-                         lambda: _cancel_requested or stop.is_set(), without_overlap)
+                         lambda: _cancel_requested or stop.is_set(), without_overlap, export)
                if scenario == "pr-memory" else None)
     background = []
     pr_end_ms = PR_WINDOWS["after"][1] + SAMPLE_SLACK_MS
@@ -328,6 +401,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                             report["ethernet_driver_error"] = True
                         if "setup() finished successfully!" in line:
                             report["setup_complete"] = True
+                            report["setup_count"] = report.get("setup_count", 0) + 1
                         if any(marker in line for marker in ("Guru Meditation", "watchdog got triggered", "abort()", "Backtrace:")):
                             report["panics"].append(line.strip())
         except Exception as exc:
@@ -452,7 +526,15 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         except (OSError, EOFError, http.client.HTTPException, KeyError, TypeError, ValueError) as exc:
             report["memory"]["error"] = str(exc)
 
+    web_setup_count = 0
+
     def inspect_web():
+        nonlocal web_setup_count
+        if restart_case and report.get("setup_count", 0) != web_setup_count:
+            web_setup_count = report["setup_count"]
+            verified_asset_ports.clear()
+            report["web_assets_verified"] = False
+            report["pt1000_verified"] = False
         probe.verify_cut(get)
         port = probe.port
         version = get("/text_sensor/ESPHome%20Version", port=port)
@@ -492,8 +574,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 observe_with_deadline(dynamics.observe, get, deadline, lambda: _cancel_requested or stop.is_set())
             if https:
                 observe_with_deadline(https.observe, get, deadline, lambda: _cancel_requested or stop.is_set())
-            if pr_load and report["web_checks"] >= 2:
-                pr_load.ready(guest_clock())
+            if pr_load and report["web_checks"] >= 2 and pr_load.ready_ms is None:
+                if not export or export.prepare(get):
+                    pr_load.ready(guest_clock())
             if measure_memory:
                 inspect_memory(port)
 
@@ -517,6 +600,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         if not _cancel_requested:
             peer.start(ports["uart1"])
         next_http = next_live = 0
+        functional_complete_since = None
         while process.poll() is None and time.monotonic() < deadline and not stop.is_set() and not _cancel_requested:
             now = time.monotonic()
             if now >= next_live:
@@ -533,6 +617,14 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                         probe_end = guest_clock()
                         if probe_start < PR_WINDOWS["after"][1] and probe_end >= PR_WINDOWS["before"][0]:
                             background.append([probe_start, probe_end])
+            if scenario in ("restart", "defrost-assist", "ott-setpoint"):
+                if dynamics.result["stage"] == "complete":
+                    if functional_complete_since is None:
+                        functional_complete_since = guest_clock()
+                    elif (guest_clock() - functional_complete_since >= 15000
+                          and time.monotonic() < deadline and not stop.is_set() and not _cancel_requested):
+                        report["functional_completion"] = True
+                        break
             stop.wait(max(0, min(0.2, deadline - time.monotonic())))
     except KeyboardInterrupt:
         report["cancelled"] = True
@@ -541,6 +633,11 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     finally:
         # End the workload measurement before teardown.
         workload_ended = time.monotonic()
+        if restart_case:
+            try:
+                dynamics.stop_workers()
+            except Exception as exc:
+                error("restart cleanup", exc)
         report["elapsed_wall_s"] = workload_ended - started
         report["exit_before_cleanup"] = process.poll() if process else None
         report["emulator_stop_requested"] = False
@@ -628,7 +725,11 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         report["input_hash_unchanged"] = report["flash_file_unchanged"] = False
         try:
             report["input_hash_unchanged"] = sha(firmware) == info["sha256"]
-            report["flash_file_unchanged"] = sha(flash) == info["sha256"]
+            final_flash = sha(flash)
+            report["flash_file_unchanged"] = final_flash == info["sha256"]
+            if restart_case:
+                report["flash_final_sha256"] = final_flash
+                report["flash_reset_path"] = "private_writable_copy"
         except OSError as exc:
             error("final hash", exc)
 
@@ -656,6 +757,13 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 except Exception as exc:
                     error("scenario evidence", exc)
                     dynamics.result["checks"] = {"evidence_complete": False}
+        if export:
+            try:
+                report["export_memory"] = export.finalize(pr_load, report["memory"], out / "serial.log")
+                report["pr_memory"]["export"] = report["export_memory"]
+            except Exception as exc:
+                error("export memory evidence", exc)
+                report["export_memory"] = {"checks": {"evidence_complete": False}}
         if _cancel_requested:
             report["cancelled"] = True
         report["qualification"], report["failure_reasons"] = qualify(report)
@@ -714,21 +822,37 @@ if __name__ == "__main__":
     parser.add_argument("--without-overlap", action="store_true", help="Run the pr-memory negative control")
     parser.add_argument("--https-fixture", type=Path, help="Private local TLS fixture directory")
     parser.add_argument("--power-house-climate", choices=CLIMATES, help="Power House climate profile (default: mild)")
+    parser.add_argument("--assist-case", choices=ASSIST_CASES)
+    parser.add_argument("--handover-variant", choices=HANDOVER_VARIANTS)
+    parser.add_argument("--restart-case", choices=RESTART_CASES)
+    parser.add_argument("--ota-image", type=Path)
+    parser.add_argument("--ota-python", type=Path, help="Python uit de ESPHome-buildomgeving")
+    parser.add_argument("--memory-export", choices=EXPORT_PATHS)
+    parser.add_argument("--export-min-rows", type=int)
+    parser.add_argument("--export-probe", action="store_true", help="Vereis seriële meetpunten rond en tijdens de download")
+    parser.add_argument("--seed-forecast-export", action="store_true",
+                        help="Vul de Vooruitblik-export via de aparte HIL-meetbuild")
     args = parser.parse_args()
     try:
         reference = read_reference(args.memory_baseline) if args.memory_baseline is not None else None
         defaults = settings(reference["report"]) if reference else {}
         scenario = args.scenario or defaults.get("scenario", "compatibility")
         default_seconds = SCENARIOS
-        seconds = args.seconds if args.seconds is not None else defaults.get("duration_s", default_seconds[scenario])
+        restart_seconds = {"hard": 340, "software": 340, "running": 1100, "ota": 440}
+        default_duration = restart_seconds.get(args.restart_case, default_seconds[scenario])
+        seconds = args.seconds if args.seconds is not None else defaults.get("duration_s", default_duration)
         raise SystemExit(run(
             args.firmware, seconds, args.mode or defaults.get("mode", "device"), args.port_base, args.name,
-            args.temperature if args.temperature is not None else defaults.get("fixture_temperature_c", 30.0),
+            args.temperature if args.temperature is not None else defaults.get("fixture_temperature_c", 34.0 if scenario == "defrost-assist" else 30.0),
             args.network or defaults.get("network", "wifi"), scenario, args.memory,
             memory_reference=reference, memory_max_drop_bytes=args.memory_max_drop_bytes,
             baseline_firmware_sha256=args.memory_baseline_firmware_sha256, without_overlap=args.without_overlap,
             https_fixture=args.https_fixture,
             power_house_climate=args.power_house_climate,
+            assist_case=args.assist_case, handover_variant=args.handover_variant,
+            restart_case=args.restart_case, ota_image=args.ota_image, ota_python=args.ota_python,
+            memory_export=args.memory_export, export_min_rows=args.export_min_rows, export_probe=args.export_probe,
+            export_seed=args.seed_forecast_export,
         ))
     except ValueError as exc:
         parser.error(str(exc))

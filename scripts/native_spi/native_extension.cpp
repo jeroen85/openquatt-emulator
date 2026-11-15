@@ -49,6 +49,9 @@ uint8_t* executable_base();
 bool device_mode = false;
 double fixture_temperature = 30.0;
 int clock_fd = -1;
+const char* rtd_schedule = nullptr;
+bool relay_high = false;
+
 constexpr uint32_t kSystimerValueHi = 0x60023040;
 constexpr uint32_t kSystimerValueLo = 0x60023044;
 constexpr uint32_t kTicksPerMicrosecond = 16;
@@ -271,6 +274,20 @@ void write_hook(void* bus, uint32_t address, uint32_t value) {
       model_failure(error);
     }
   }
+  if (rtd_schedule && (address == oq_native::kGpio + 4 ||
+                       address == oq_native::kGpio + 8 || address == oq_native::kGpio + 12)) {
+    auto& holder = state();
+    std::lock_guard<std::mutex> guard(holder.mutex);
+    constexpr uint32_t relay = 1u << 16;
+    const bool next = address == oq_native::kGpio + 4 ? (value & relay) != 0 :
+        (value & relay) == 0 ? relay_high : address == oq_native::kGpio + 8;
+    if (relay_high != next) {
+      relay_high = next;
+      std::fprintf(trace, "{\"kind\":\"r1\",\"guest_us\":%llu,\"energized\":%s}\n",
+                   static_cast<unsigned long long>(holder.clock_published_us), next ? "true" : "false");
+      std::fflush(trace);
+    }
+  }
   const bool gpio = ethernet_port && (address == kGpioClear || address == kGpioPin9);
   if (device_mode && (observed(address) || gpio)) {
     try {
@@ -282,6 +299,14 @@ void write_hook(void* bus, uint32_t address, uint32_t value) {
         if (address == kGpioClear && (value & kGpio9)) holder.gpio_latched = false;
         holder.refresh_gpio(bus);
         return;
+      }
+      if (rtd_schedule && address == oq_native::kSpi && (value & (1u << 24))) {
+        if (FILE* file = std::fopen(rtd_schedule, "r")) {
+          double next;
+          if (std::fscanf(file, "%lf", &next) == 1 && std::isfinite(next) && next >= 0 && next <= 100)
+            model.rtd.temperature = next;
+          std::fclose(file);
+        }
       }
       const auto action = model.write(address, value);
       if (model.spi2_address(address)) {
@@ -408,6 +433,7 @@ __attribute__((constructor)) void initialize() {
     set_interrupt = reinterpret_cast<Interrupt>(base + 0x104414);
     ethernet_port = static_cast<int>(value);
   }
+  rtd_schedule = std::getenv("OQ_NATIVE_RTD_CONTROL");
   if (const char* temperature = std::getenv("OQ_NATIVE_RTD_C")) {
     char* end = nullptr;
     fixture_temperature = std::strtod(temperature, &end);

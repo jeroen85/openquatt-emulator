@@ -75,8 +75,11 @@ def summarize_workload(schedule, sse, gets, background, ready_ms):
 
 
 class PrWebLoad:
-    def __init__(self, port, guest_clock, started, deadline, cancelled, without_overlap):
+    def __init__(self, port, guest_clock, started, deadline, cancelled, without_overlap, export=None):
         self.schedule = plan(without_overlap)
+        self.export = export
+        if export:
+            self.schedule = {**self.schedule, "export": export.plan}
         self.port, self.guest_clock, self.started, self.deadline = port, guest_clock, started, deadline
         self.cancelled = cancelled
         self.stop = threading.Event()
@@ -103,7 +106,8 @@ class PrWebLoad:
         if self.ready_ms is not None or guest_ms >= READY_BY_MS:
             return
         self.ready_ms = guest_ms
-        for target in (self.run_sse, self.run_gets):
+        targets = (self.run_sse, self.run_gets, self.run_export) if self.export else (self.run_sse, self.run_gets)
+        for target in targets:
             worker = threading.Thread(target=target, daemon=True, name=target.__name__)
             worker.start()
             self.threads.append(worker)
@@ -114,7 +118,10 @@ class PrWebLoad:
             thread.join(timeout=3)
         return not any(thread.is_alive() for thread in self.threads)
 
-    def request(self, row, target, end_ms, consume, *, sse=False):
+    def run_export(self):
+        self.export.run(self)
+
+    def request(self, row, target, end_ms, consume, *, sse=False, timeout=3):
         if not self.wait_until(target):
             return
         row["start"] = self.stamp()
@@ -122,7 +129,7 @@ class PrWebLoad:
             row["outcome"] = "missed_start"
             return
         at_end = lambda: self.guest_clock() >= end_ms
-        deadline = min(self.deadline, time.monotonic() + (75 if sse else 3))
+        deadline = min(self.deadline, time.monotonic() + (75 if sse else timeout))
         row["outcome"] = "error"
         try:
             with bounded_response(self.port, row["path"], deadline, lambda: self.stopped() or at_end(),

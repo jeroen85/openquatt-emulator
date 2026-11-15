@@ -1,6 +1,6 @@
 # Vaste regressiescenario’s
 
-Gebruik deze CLI-proeven voor wijzigingen aan Power House, stooklijnbedrijf en HTTPS. De firmwareproeven laden de gekozen Q Duo-factory-bin rechtstreeks, behalve de lokale HTTPS-succesproef: die gebruikt een afzonderlijke Q Duo-testbuild met een eigen test-CA. Een ELF of debugger is voor geen van deze runs nodig.
+Gebruik deze CLI-proeven voor wijzigingen aan onder meer Power House, stooklijnbedrijf, OpenTherm, herstarts en netwerkverkeer. De firmwareproeven laden de gekozen Q Duo-factory-bin rechtstreeks, behalve de lokale HTTPS-succesproef: die gebruikt een afzonderlijke Q Duo-testbuild met een eigen test-CA. Een ELF of debugger is voor geen van deze runs nodig.
 
 Kies de exacte bronrevisie, bouw `configs/heatpump_controller_q/duo.yaml` en bewaar de bronrevisie, configuratie, ESPHome-/ESP-IDF-versie en SHA-256 van de factory-bin. De imagecontrole herkent de firmwareopbouw; zij bewijst de bronrevisie niet. De [installatiehandleiding](handleiding.md) beschrijft de runtime en poorten.
 
@@ -28,6 +28,10 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | Weer-/manifestverzoeken, TLS-worker of gelijktijdige webactiviteit | `https` | Geslaagde TLS, serialisatie, verbinding afbreken en herstel met de lokale test-CA-build. |
 | Ethernetdriver of netwerkterugval | `compatibility` op Ethernet of met `--network failover` | DHCP, bereikbaarheid en herstel via Wi-Fi. |
 | Dagmeting met ketelwarmte | [Ketelproef](ketelproef.md) | Doorlopen van dezelfde dagteller in CM3/CM4; aparte labbuild vereist. |
+| Ketelhulp tijdens defrost | [`defrost-assist`](#ketelhulp-tijdens-defrost) | R1 of OpenTherm, inclusief de betreffende CM3-timers en beveiligingen. |
+| OpenTherm-thermostaat en bronselectie | [`ott-setpoint`](#opentherm-setpointgrenzen) | Verse digitale waarden, setpointgrenzen en herstel. |
+| OTA, opslag, herstart of ODU-overname | [`restart`](#herstart-en-ota) | Nieuwe boot, bewaarde instelling en ODU-continuïteit, afhankelijk van de variant. |
+| Geheugen bij recorder- of Vooruitblik-export | [`pr-memory --memory-export`](#geheugen-tijdens-een-export) | Echte download tijdens webbelasting en gerichte meetdekking rond de overdracht. |
 
 **Dekking van Power House:** de basisproef gebruikt het normale frequentiebereik en de gewone ODU-modelrespons. De aanvullende routes `odu-response` en `odu-transients` blijven gerichte regressies met geïnjecteerde afwijkingen. De basisproef stuurt externe warmtevraag via de gewone API; zij kwalificeert daarmee nog niet het interne woningmodel, leren/voorspellen of elke combinatie van niveau en temperatuur.
 
@@ -188,6 +192,86 @@ Beide lokale certificaten moeten expliciete TLS-afwijzingen geven; geen TLS-hand
 Gebruik `pr-memory --without-overlap` bij wijzigingen aan de belastinggenerator of overlapmeting. De clients moeten werken, terwijl de gemeten overlap nul blijft. **Onvergelijkbaar** is dan de verwachte uitkomst. Voor een gewone PR-geheugenvergelijking gebruik je de route mét overlap uit de [handleiding](handleiding.md#geheugenproef-voor-een-pr).
 
 De Python- en native regressietests uit de [README](../README.md#emulatorcode-testen) controleer je bij wijzigingen aan de emulatorcode. Ze valideren het harnas en vervangen de firmwareproeven niet.
+
+## Ketelhulp tijdens defrost
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" --network ethernet \
+  --scenario defrost-assist --assist-case r1 --name q-duo-defrost-r1
+```
+
+Gebruik een gewone Q Duo-bin met defrostketelhulp. De proef kiest lokaal 34 °C aanvoer, laat die zakken naar 28 °C en gebruikt de productietimers. De CLI stopt na een afgeronde proef plus 15 gastseconden of op de ingestelde hostlimiet. De hoofdcontroles staan onder `dynamics.checks`.
+
+| `--assist-case` | Wat de proef controleert |
+| --- | --- |
+| `r1` | Opt-in, afwijzing van een korte melding, 10 s bevestiging, 60 s minimumduur, 120 s herinschakelwachttijd, begrenzing van het keteldoel en aanvoersensoruitval. |
+| `ot` | Warmstartblokkade bij 42,5 °C, afkoeling naar 30 °C, CH en `TSet` op de bus, geen R1-activiteit en vrijgave naar CM2. |
+| `curve` | Stooklijnbedrijf. Flowverlies laat R1 afvallen en herstel start dezelfde defrosthulp niet opnieuw. |
+| `expire` | R1 valt na 900 gastseconden af bij een hangende defrostmelding en blijft daarna uit. |
+| `handover` | Normale Duo-hulp in CM3 gaat via haar eigen timers over naar defrosthulp. `demand-drop` verlaagt de vraag, `held-load` gebruikt hoge vraag en een verhoogde uitschakeldrempel. Kies met `--handover-variant`. |
+
+Voor R1 en de R1-varianten reageert de virtuele OpenTherm-ketel niet. De runner meet GPIO16 rechtstreeks en gebruikt CM3-overgangen voor de timerintervallen. De gemeten R1-onderbrekingen tijdens `handover` staan apart in het rapport. Reserveer voor de volledige 900 s- en handoverproef ruim voldoende rekentijd. Controleer of de gastklok bij parallelle runs snel genoeg vordert.
+
+## OpenTherm-setpointgrenzen
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --scenario ott-setpoint --name q-duo-ott-setpoint
+```
+
+De virtuele thermostaat verstuurt TrSet 21, 0, 4,5, 5, 35, 35,5 en opnieuw 21 °C via OpenTherm. De proef vergelijkt de ontvangen en geselecteerde waarden terwijl de link geldig blijft. Bij TrSet 0 biedt zij ook een meetwaarde van 0 °C voor de kamertemperatuur. Die blijft geldig. Voor setpoints is alleen 5–35 °C geldig. Het scenario controleert ook dat er geen startopdracht naar een compressor gaat.
+
+## Herstart en OTA
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" --network ethernet \
+  --scenario restart --restart-case hard --name q-duo-hard-reset
+```
+
+`hard` gebruikt de resetopdracht van de emulator. `software` gebruikt de knop Restart in de firmware. Beide schrijven een testinstelling, wachten op opslag en lezen de instelling na de volgende boot terug. `running` gebruikt de softwareherstart met beide compressoren actief en volgt de compressorfrequenties van vlak vóór de reset tot minstens 20 gastseconden nadat de web-app terugkomt. De ODU-modelklok loopt tijdens de controllerreset door. De beoordeling gebruikt ook de Modbus-schrijfhistorie. Voor afschakeltimers per unit is afzonderlijk bewijs van het precieze overnamemoment nodig.
+
+Voor OTA geef je een afzonderlijk ESP32-S3-appimage en Python uit een passende ESPHome-omgeving op.
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" --network ethernet \
+  --scenario restart --restart-case ota --ota-image "$oq_ota" \
+  --ota-python "$oq_esphome_python" --name q-duo-ota
+```
+
+De runner reserveert vier lokale poorten vanaf `--port-base`, of vijf met OTA. Alleen de eigen flashkopie is schrijfbaar. Het rapport controleert de originele firmwarehash, beide boots, de nieuwe app-partitie en de exacte geschreven OTA-bytes. Het legt vast welke verzoeken naar `/energy/history` een volledig antwoord kregen terwijl de OTA-client actief was. Die sessie omvat ook de handshake en het wachten op bevestiging. Om samenloop met een specifieke firmwaremutex te bewijzen, voeg je firmwaremarkers voor lockbezit en shutdown toe aan een gerichte testbuild.
+
+## Geheugen tijdens een export
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --scenario pr-memory --memory-export recorder --name q-duo-recorder-export
+```
+
+De extra client downloadt de systeemrecorder binnen het bestaande belastingsvenster met SSE en GET-verzoeken. `--memory-export forecast` kiest de Vooruitblik-export. Gebruik een build die deze route aanbiedt en richt de proef in met de gewenste hoeveelheid daadwerkelijke of vooraf gevulde meetdata. `--export-min-rows` geeft de minimaal vereiste vulling aan. De meting controleert inhoud en overlap, en bewaart de payloadhash en het aantal rijen.
+
+`export_memory.phases` toont vóór, tijdens en na de overdracht hoeveel meetpunten beschikbaar waren. De gewone recorder kan bij een korte download nul meetpunten tijdens de overdracht opleveren. Gebruik bij een gerichte labbuild `--export-probe` om seriële metingen tijdens de overdracht te vereisen. De proef leest het formaat `hil.exp … mem <gast_ms> <vrije-interne-heap-B> <grootste-interne-blok-B> <heapmin-B> <HTTPD-stackreserve-B> <vrije-PSRAM-B> [grootste-PSRAM-blok-B]`. Bij een oudere probe blijft het grootste PSRAM-blok onbekend. Gebruik dezelfde probe, vulling en belasting in baseline en kandidaat voor vergelijkende resultaten. De runner toont verschillen per exportfase met beide aantallen meetpunten. Een verschil vereist dat beide runs die waarde in de fase hebben gemeten. HA API, MQTT en andere extra clients moeten aantoonbaar actief zijn als die belasting deel uitmaakt van de vraag.
+
+De openstaande Vooruitblik-export kun je lokaal vullen met synthetische meetdata. Kopieer de twee bestanden uit [`fixtures/export-memory`](../fixtures/export-memory/) naar de map naast `configs/heatpump_controller_q/duo.yaml` in een afzonderlijke firmwarecheckout. Compileer daar `configs/heatpump_controller_q/duo_export_probe.yaml` met de ESPHome-versie van die firmware. Gebruik de resulterende testbin in de virtuele HIL. Deze overlay voegt een proefknop en seriële metingen toe.
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_probe_bin" \
+  --scenario pr-memory --memory-export forecast --seed-forecast-export \
+  --export-min-rows 4321 --export-probe --name q-duo-forecast-full
+```
+
+De proefknop vult 4.321 synthetische meetmomenten en 49 scenario’s op firmware met Vooruitblik-opname. De runner controleert de vulling voordat hij de webbelasting start. De probe meet rond de export zo vaak als iedere 100 ms. Ontbreken meetpunten tijdens de overdracht, dan kwalificeert de specifieke piekmeting niet.
+
+## Volgende proeven uit OpenQuatt
+
+De testkeuze is getoetst aan OpenQuatt `dev` bij `9829c1eb`, de fysieke HIL-handleiding, hostregressies en recente wijzigingen. Naast de bovenstaande scenario’s zijn dit kandidaten voor virtuele end-to-endproeven.
+
+| Proef | Aanleiding en afkeurcriterium |
+| --- | --- |
+| Bronuitval en terugschakelen | De fysieke `input-sources`-proef en `test_input_source_runtime_contract.py`. Laat één API-, HA- of MQTT-bron verlopen en eis de juiste effectieve bron, veilige uitgang en herstel. |
+| Eén buitenunit tijdelijk onbereikbaar | De Modbus-contracttests en de ODU-watchdog. Eis een geldige reactie van de andere unit, veilige stop of terugval volgens het firmwarecontract en herstel met verse telemetrie. |
+| Koelbeveiliging bij verlies van dauwpunt of stijgend dauwpunt | `test_cooling_request_dew_stop_runtime.py`. Leg werkelijke koelopdrachten en de blokkade of gecontroleerde herstart op de bus vast. De temperatuurrespons blijft modelgedrag. |
+| MQTT-herverbinding onder webbelasting | De MQTT-workerregressies van #914 en Q-stackwijziging #933. Eis verse berichten na herverbinding, voortgang van de regellus en een geheugenmeting in hetzelfde venster. |
+| Uur- of daggrens met energiehistorie | Het praktijkgeval van #957. Combineer een gecontroleerde tijdbron en de herstartroute voor controles van herstelmarkering en dubbeltelling. |
 
 ## Rapport en grenzen
 

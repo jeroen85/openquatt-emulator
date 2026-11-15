@@ -30,6 +30,8 @@ def runtime_fingerprint(report):
         sources.extend(("dynamics.py", "lowflow.py"))
     if settings(report)["scenario"] == "pr-memory":
         sources.extend(("run.py", "pr_workload.py", "pr_memory.py", "http_response.py"))
+    if report.get("pr_memory", {}).get("plan", {}).get("export"):
+        sources.append("export_memory.py")
     fingerprint = {key: report[key] for key in ("executable_sha256", "extension_sha256", "odu_library_sha256")}
     fingerprint.update({name: report["sources"][name] for name in sources})
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in fingerprint.values()):
