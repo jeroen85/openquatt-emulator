@@ -5,7 +5,10 @@ inputs:
     description: OpenQuatt source ref
     required: true
   role:
-    description: Artifact name suffix and checkout directory
+    description: Firmware role and checkout directory
+    required: true
+  artifact_suffix:
+    description: Profile and architecture for the artifact name
     required: true
 
 runs:
@@ -55,7 +58,7 @@ runs:
           > "$bundle/source.json"
     - uses: actions/upload-artifact@v6
       with:
-        name: q-duo-${{ inputs.role }}
+        name: q-duo-${{ inputs.role }}-${{ inputs.artifact_suffix }}
         path: ${{ runner.temp }}/q-duo-${{ inputs.role }}/
         if-no-files-found: error
         retention-days: 1

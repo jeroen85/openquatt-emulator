@@ -90,6 +90,7 @@ jobs:
         with:
           ref: ${{ inputs.openquatt_ref || 'b215a3511ab7c05d9a0bad782b894420a98cbcef' }}
           role: candidate
+          artifact_suffix: ${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
 
   q-duo-baseline:
     if: ${{ inputs.baseline_ref != '' }}
@@ -104,6 +105,7 @@ jobs:
         with:
           ref: ${{ inputs.baseline_ref }}
           role: baseline
+          artifact_suffix: ${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
 
   q-duo-hil:
     needs: [emulator-checks, q-duo-firmware, q-duo-baseline]
@@ -121,12 +123,12 @@ jobs:
           python-version: '3.13'
       - uses: actions/download-artifact@v7
         with:
-          name: q-duo-candidate
+          name: q-duo-candidate-${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
           path: ${{ runner.temp }}/q-duo-candidate
       - uses: actions/download-artifact@v7
         if: ${{ inputs.baseline_ref != '' }}
         with:
-          name: q-duo-baseline
+          name: q-duo-baseline-${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
           path: ${{ runner.temp }}/q-duo-baseline
       - name: Install the pinned Linux runtime
         if: runner.os == 'Linux'
@@ -192,7 +194,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: virtual-hil-report-${{ runner.os }}-${{ runner.arch }}
+          name: virtual-hil-report-${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}-${{ runner.os }}-${{ runner.arch }}
           path: ${{ runner.temp }}/virtual-hil-report/
           if-no-files-found: warn
           retention-days: 14
