@@ -1,0 +1,16 @@
+name: Virtual HIL Modbus-kwalificatie
+
+on:
+  pull_request:
+    branches: [codex/virtual-hil-github-actions]
+
+permissions:
+  contents: read
+
+jobs:
+  modbus:
+    uses: ./.github/workflows/virtual-hil.yml
+    with:
+      profile: modbus
+      architecture: x64
+      openquatt_ref: b215a3511ab7c05d9a0bad782b894420a98cbcef
