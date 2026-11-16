@@ -149,8 +149,8 @@ jobs:
             done
           done
           if [[ -f "$output/report.json" ]]; then
-            printf '### Q Duo · virtuele HIL\n\nUitkomst: **%s**\n\n' \
-              "$(jq -r '.status' "$output/report.json")" >> "$GITHUB_STEP_SUMMARY"
+            outcome="$(jq -r 'if .status == "PASS_COSIM" then "Q Duo-rooktest geslaagd" else .status end' "$output/report.json")"
+            printf '### Q Duo · virtuele HIL\n\nUitkomst: **%s**\n\n' "$outcome" >> "$GITHUB_STEP_SUMMARY"
             jq -r '.failure_reasons[] | "- " + .' "$output/report.json" >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@v6
