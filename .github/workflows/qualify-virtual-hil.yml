@@ -1,0 +1,29 @@
+name: Virtual HIL profielkwalificatie
+
+on:
+  pull_request:
+    branches: [codex/virtual-hil-github-actions]
+
+permissions:
+  contents: read
+
+jobs:
+  scenario:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: herstart
+            baseline_ref: 82a840099548ccbef958bbd5fa95a68beba24d90
+          - profile: modbus
+            baseline_ref: ''
+          - profile: energie
+            baseline_ref: ''
+          - profile: regeling
+            baseline_ref: ''
+    uses: ./.github/workflows/virtual-hil.yml
+    with:
+      profile: ${{ matrix.profile }}
+      architecture: x64
+      openquatt_ref: b215a3511ab7c05d9a0bad782b894420a98cbcef
+      baseline_ref: ${{ matrix.baseline_ref }}
