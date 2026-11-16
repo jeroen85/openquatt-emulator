@@ -28,7 +28,7 @@ class CosimProtocolTest(unittest.TestCase):
             read_frame(io.BytesIO(frame(b"\x80")))
 
     def test_unsupported_modes_fail_before_loading_firmware(self):
-        for options in ({"network": "ethernet"}, {"measure_memory": True}, {"scenario": "lowflow"}):
+        for options in ({"network": "ethernet"}, {"memory_export": "recorder"}, {"scenario": "lowflow"}):
             with self.subTest(options=options), self.assertRaisesRegex(ValueError, "Q Duo-rooktest"):
                 run(None, backend="cosim", **options)
 

@@ -1,0 +1,61 @@
+name: Build Q Duo factory firmware
+description: Build the selected revision and record its firmware identity
+inputs:
+  ref:
+    description: OpenQuatt source ref
+    required: true
+  role:
+    description: Artifact name suffix and checkout directory
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: OpenQuatt/OpenQuatt
+        ref: ${{ inputs.ref }}
+        path: ${{ inputs.role }}
+        persist-credentials: false
+    - uses: actions/setup-node@v6
+      with:
+        node-version-file: ${{ inputs.role }}/.node-version
+        package-manager-cache: false
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - name: Build and verify firmware
+      shell: bash
+      working-directory: ${{ inputs.role }}
+      env:
+        BUNDLE_ROLE: ${{ inputs.role }}
+      run: |
+        npm ci --ignore-scripts
+        npm run build:web
+        python -m venv "$RUNNER_TEMP/venv-$BUNDLE_ROLE"
+        source "$RUNNER_TEMP/venv-$BUNDLE_ROLE/bin/activate"
+        python -m pip install -r .github/requirements-esphome.txt
+        source_revision="$(git rev-parse HEAD)"
+        target=configs/heatpump_controller_q/duo.yaml
+        export ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT=2
+        esphome -s build_source_repository OpenQuatt/OpenQuatt \
+          -s build_source_commit "$source_revision" -s build_target "$target" compile "$target"
+        build_dir=.esphome/build/heatpump_controller_q_duo/build
+        python scripts/repair_factory_bin.py "$build_dir" --normalize-app
+        bundle="$RUNNER_TEMP/q-duo-$BUNDLE_ROLE"
+        mkdir -p "$bundle"
+        cp "$build_dir/firmware.factory.bin" "$bundle/"
+        (
+          cd "$bundle"
+          sha256sum firmware.factory.bin > firmware.sha256
+        )
+        jq -n --arg revision "$source_revision" --arg target "$target" \
+          --arg esphome "$(esphome version)" \
+          '{repository:"OpenQuatt/OpenQuatt",revision:$revision,target:$target,esphome:$esphome}' \
+          > "$bundle/source.json"
+    - uses: actions/upload-artifact@v6
+      with:
+        name: q-duo-${{ inputs.role }}
+        path: ${{ runner.temp }}/q-duo-${{ inputs.role }}/
+        if-no-files-found: error
+        retention-days: 1

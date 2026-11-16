@@ -25,7 +25,7 @@ De CLI biedt ook vaste proeven voor defrostketelhulp, OpenTherm-setpointgrenzen,
 ## Emulatorcode testen
 
 ```sh
-python3 -m unittest scripts.native_spi.test_cosim scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios scripts.native_spi.test_safety_scenarios scripts.native_spi.test_runtime_scenarios
+python3 -m unittest scripts.native_spi.test_pr_suite scripts.native_spi.test_cosim scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios scripts.native_spi.test_safety_scenarios scripts.native_spi.test_runtime_scenarios
 mkdir -p .tmp/native-spi
 oq_sdk="$(xcrun --sdk macosx --show-sdk-path)"
 xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++17 \
@@ -39,9 +39,7 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
 
 ## GitHub Actions
 
-De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) bouwt op Ubuntu één Q Duo-factory-bin en test die standaard op Linux x64. De rooktest controleert opstarten, Wi-Fi, de web-app, de PT1000 en beide Modbus-buitenunits. De aparte runner- en modeltests draaien op Linux x64.
-
-Op PR’s in deze emulatorrepo gebruikt de workflow een vaste OpenQuatt-revisie. Kies in **Actions → Virtual HIL → Run workflow** een andere OpenQuatt-commit of een ref zoals `refs/pull/965/merge`. Bij een handmatige run kun je ook arm64 kiezen. Elke run test één architectuur. Het artifact `virtual-hil-report-<architectuur>` bevat de bronrevisie, firmwarehash en uitkomst. Ontwikkelaars met toegang tot de emulatorrepo kunnen deze workflow starten.
+De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait standaard één Q Duo-rooktest met geheugenmeting onder webbelasting op Linux x64. Kies bij een handmatige run de OpenQuatt-ref en het profiel voor herstart, Modbus-uitval, energiehistorie of regeling. Geef een baseline-ref op om het geheugen met een tweede build te vergelijken. [Profielen en rapporten](docs/scenarios.md#firmwareproeven-op-github)
 
 ## Gevalideerd met een ongewijzigde Q Duo-bin
 

@@ -1,0 +1,45 @@
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+from .memory_comparison import METRICS
+from .pr_suite import BASE, PROFILES, run_suite, select_cases, wait_for_case
+
+
+class PrSuiteTest(unittest.TestCase):
+    def test_selects_all_contracts_without_repeating_the_base_run(self):
+        self.assertEqual(select_cases("basis", "cosim"), (BASE,))
+        self.assertEqual(select_cases("herstart", "cosim"), (BASE, "herstart"))
+        all_cases = select_cases("alles", "native")
+        self.assertEqual(set(all_cases), {case for profile in PROFILES.values() for case in profile})
+        self.assertEqual(len(all_cases), len(set(all_cases)))
+        with self.assertRaisesRegex(ValueError, "macOS"):
+            select_cases("modbus", "cosim")
+
+    def test_failed_baseline_never_produces_a_comparison(self):
+        memory = {"phases": {phase: dict.fromkeys(METRICS, 123)
+                             for phase in ("before", "load", "after")}}
+
+        def result(key, *_):
+            passed = key != "geheugen-baseline"
+            return {"title": key, "passed": passed, "reasons": [] if passed else ["Ontbrekende meetdata"],
+                    "report": {"memory": memory}}
+
+        with tempfile.TemporaryDirectory() as folder, patch("scripts.native_spi.pr_suite.run_case", side_effect=result) as run:
+            root = Path(folder)
+            self.assertEqual(run_suite("basis", root/"candidate.bin", "cosim", 19460, root, root/"baseline.bin"), 1)
+            self.assertEqual(run.call_args.args[-1], ())
+            summary = (root/"summary.md").read_text()
+            self.assertIn("Ontbrekende meetdata", summary)
+            self.assertIn("Q Duo-rooktest geslaagd", summary)
+
+    def test_stop_gives_the_owned_runner_time_to_write_report(self):
+        child = Mock()
+        child.poll.return_value = None
+        child.wait.return_value = 1
+        with patch("scripts.native_spi.pr_suite.stop_requested", True), patch("os.killpg") as kill:
+            self.assertEqual(wait_for_case(child), 1)
+        child.terminate.assert_called_once_with()
+        child.wait.assert_called_once_with(timeout=25)
+        kill.assert_not_called()

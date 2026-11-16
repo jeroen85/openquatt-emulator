@@ -139,6 +139,11 @@ class CosimPeer:
 
     def observe(self, packet):
         event_ms = packet.get(1, 0) // 1_000_000
+        if 9 in packet:  # ChipReset starts a new guest uptime.
+            self.clock_ms = event_ms
+            self.last_spi_reply_ms = None
+            self.lib.oq_cosim_rtd_select(self.rtd, False)
+            return
         self.clock_ms = max(self.clock_ms, event_ms)
         if 5 in packet:
             ack = fields(packet[5])

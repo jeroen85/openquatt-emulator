@@ -54,7 +54,7 @@ Wie het archief via de browser downloadt, kan het lokaal uitpakken en het bestan
 
 ### Linux en Windows met WSL2
 
-De CLI kan de Q Duo-rooktest ook draaien via de officiële co-simulatie van esp-emu 1.0.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`.
+De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.0.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`.
 
 Gebruik op Ubuntu 24.04:
 
@@ -72,7 +72,7 @@ De installer controleert de SHA-256 van het officiële Espressif-archief en het 
 
 Voor Windows gebruik je Ubuntu onder WSL2. Installeer Ubuntu bijvoorbeeld met `wsl --install -d Ubuntu-24.04` in PowerShell, open daarna de Ubuntu-terminal en voer daar de Linux-opdrachten uit. Bewaar de checkout in je Linux-thuismap. Een bestaand firmwarebestand op de Windows-schijf kun je meegeven via `/mnt/c/...`. Deze route wacht nog op een afzonderlijke WSL2-proef. [WSL installeren](https://learn.microsoft.com/windows/wsl/install)
 
-Voor Ethernet, OpenTherm, de desktopwerkbank en de scenario’s met foutinjectie of geheugentests gebruik je de macOS-route uit de voorgaande sectie.
+Voor Ethernet, OpenTherm, de desktopwerkbank en de overige scenario’s gebruik je de macOS-route uit de voorgaande sectie. Zie ook de [GitHub-profielen](scenarios.md#firmwareproeven-op-github).
 
 ## 2. De juiste firmware kiezen
 

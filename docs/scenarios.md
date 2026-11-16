@@ -42,6 +42,27 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 
 Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. Vergelijk dan baseline en kandidaat en leg de ontbrekende fase vast; zo’n bestaande afkeur is nog geen door de PR veroorzaakte regressie. De proef krijgt daarmee geen PASS.
 
+### Firmwareproeven op GitHub
+
+OpenQuatt gebruikt de gewone CI-checks en gerichte regressietests. Aanvullende HIL-proeven volgen het risico van de wijziging. De [PR-richtlijn](https://github.com/OpenQuatt/OpenQuatt/blob/dev/CONTRIBUTING.md#pull-request-validation) behandelt aansturing en hardware apart van runtimegeheugen.
+
+De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op één Ubuntu x64-runner. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits. Tegelijk meet hij de vrije interne heap, heapmin sinds boot en het grootste vrije blok in de vensters vóór, tijdens en na overlappende SSE en downloads.
+
+Kies na de merge bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref` en het profiel voor de wijziging.
+
+| Profiel | Aanvulling op de basisrun | Backend |
+| --- | --- | --- |
+| `basis` | Rooktest en geheugen onder webbelasting | Linux |
+| `herstart` | Instelling opslaan, softwareherstart en opnieuw uitlezen | Linux |
+| `modbus` | HP2-uitval, HP1-polls en herstel van HP2 onder warmtevraag | macOS |
+| `energie` | Uur- en dagwisseling, behoud van historie en herstel na herstart | macOS |
+| `regeling` | Power House-vraag en Single/Duo in het milde profiel, plus flowverlies tijdens defrost en herstel | macOS |
+| `alles` | Bovenstaande proeven achter elkaar | macOS |
+
+Gebruik bij `basis` en `herstart` het veld `architecture` om Linux arm64 te kiezen. De andere profielen vragen een gehoste Apple Silicon-runner. Het rapport bewaart per proef de uitslag, het ruwe rapport en de firmware-identiteit. Een uitgebreide run kan door de productietimers ruim een uur duren.
+
+Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. De workflow bouwt beide varianten na elkaar op afzonderlijke runners. Hij meet ze achter elkaar op dezelfde runner met elk een eigen flashkopie. Zij toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
+
 ## Gerichte firmwareproeven
 
 | Scenario | Standaardduur op de host | Firmware | Controle |

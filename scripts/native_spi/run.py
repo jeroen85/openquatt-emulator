@@ -163,9 +163,11 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         energy_case=None, backend="native"):
     if backend not in ("native", "cosim"):
         raise ValueError("Ongeldige emulatorbackend")
-    if backend == "cosim" and (mode != "device" or network != "wifi" or scenario != "compatibility"
-                               or measure_memory or memory_reference is not None):
-        raise ValueError("Co-simulatie ondersteunt de Q Duo-rooktest op Wi-Fi")
+    if backend == "cosim" and (mode != "device" or network != "wifi"
+                               or scenario not in ("compatibility", "pr-memory", "restart")
+                               or memory_export is not None
+                               or (scenario == "restart" and restart_case != "software")):
+        raise ValueError("Co-simulatie op Wi-Fi ondersteunt de Q Duo-rooktest, pr-memory en de softwareherstart")
     if scenario in ("mqtt-reconnect", "energy-boundary") and (network != "ethernet" or mode != "device"):
         raise ValueError("Deze proef vereist de lokale Ethernet-fixture in device-modus")
     if scenario == "mqtt-reconnect":
@@ -192,7 +194,7 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Exportopties vereisen --memory-export")
     if scenario == "restart":
         restart_case = restart_case or "hard"
-        if restart_case not in RESTART_CASES or network != "ethernet":
+        if restart_case not in RESTART_CASES or (backend == "native" and network != "ethernet"):
             raise ValueError("restart vereist een bekende herstartvariant en Ethernet")
         if restart_case == "ota":
             if ota_image is None or not ota_image.is_file() or ota_python is None or not ota_python.is_file():
@@ -263,7 +265,7 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         ports["ethernet"] = base + 1
     ota_identity = ota_info(ota_image, info) if ota_image is not None else None
     if restart_case or energy_case:
-        ports["control"] = base + 3
+        ports["control"] = base + (4 if backend == "cosim" else 3)
     if scenario == "mqtt-reconnect":
         ports["mqtt"] = base + 3
     if ota_identity:
@@ -328,7 +330,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             (source_root / name).write_bytes(data)
         # ensure() compiled these captured native bytes into this exact cache.
         for name, expected in native_build["source_sha256"].items():
-            source = executable.parent / name
+            source = (odu_library.parent if use_cosim else executable.parent) / name
             if sha(source) != expected:
                 raise ValueError("Compiled native source snapshot changed")
             target = source_root / "native" / name
@@ -750,7 +752,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             report["pr_memory"] = {
                 "run_id": out.name, "plan": pr_load.schedule, "workload": workload,
                 "reset_path": "new_emulator_process_from_factory_copy",
-                "hardware_profile": "esp32s3-8M-psram-q-duo-native",
+                "hardware_profile": f"esp32s3-8M-psram-q-duo-{backend}",
             }
         peer.stop.set()
         if cosim:
