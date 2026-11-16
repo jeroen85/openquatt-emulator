@@ -8,7 +8,7 @@ inputs:
     description: Firmware role and checkout directory
     required: true
   artifact_suffix:
-    description: Profile and architecture for the artifact name
+    description: Shared build plan key
     required: true
 
 runs:

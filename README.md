@@ -39,7 +39,7 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
 
 ## GitHub Actions
 
-De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait standaard één Q Duo-rooktest met geheugenmeting onder webbelasting op Linux x64. Kies bij een handmatige run de OpenQuatt-ref en het profiel voor herstart, Modbus-uitval, energiehistorie of regeling. Geef een baseline-ref op om het geheugen met een tweede build te vergelijken. [Profielen en rapporten](docs/scenarios.md#firmwareproeven-op-github)
+De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait standaard één Q Duo-rooktest met geheugenmeting onder webbelasting op Linux x64. Kies bij een handmatige run de OpenQuatt-ref en één of meer profielen. De proeven delen één Q Duo-factory-bin. Een baseline-ref leidt alleen tot een extra build als hij naar een andere OpenQuatt-commit verwijst. [Profielen en rapporten](docs/scenarios.md#firmwareproeven-op-github)
 
 ## Gevalideerd met een ongewijzigde Q Duo-bin
 

@@ -20,6 +20,10 @@ on:
         type: choice
         default: basis
         options: [basis, herstart, modbus, energie, regeling, alles]
+      profiles:
+        description: Meerdere profielen, kommagescheiden. Overschrijft profile.
+        type: string
+        required: false
       baseline_ref:
         description: Optionele OpenQuatt-ref voor de geheugenvergelijking
         type: string
@@ -36,6 +40,9 @@ on:
       profile:
         type: string
         default: basis
+      profiles:
+        type: string
+        required: false
       baseline_ref:
         type: string
         required: false
@@ -44,10 +51,50 @@ permissions:
   contents: read
 
 concurrency:
-  group: virtual-hil-${{ github.ref }}-${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
+  group: virtual-hil-${{ github.ref }}-${{ inputs.profiles || inputs.profile || 'basis' }}-${{ inputs.openquatt_ref }}-${{ inputs.baseline_ref }}-${{ inputs.architecture || 'x64' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.selection.outputs.matrix }}
+      candidate: ${{ steps.selection.outputs.candidate }}
+      baseline: ${{ steps.selection.outputs.baseline }}
+      artifact_key: ${{ steps.selection.outputs.artifact_key }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: OpenQuatt/OpenQuatt
+          ref: ${{ inputs.openquatt_ref || 'b215a3511ab7c05d9a0bad782b894420a98cbcef' }}
+          path: plan-candidate
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        if: ${{ inputs.baseline_ref != '' }}
+        with:
+          repository: OpenQuatt/OpenQuatt
+          ref: ${{ inputs.baseline_ref }}
+          path: plan-baseline
+          persist-credentials: false
+      - name: Resolve revisions and select profiles
+        id: selection
+        shell: bash
+        env:
+          PROFILES: ${{ inputs.profiles || inputs.profile || 'basis' }}
+          ARCHITECTURE: ${{ inputs.architecture || 'x64' }}
+        run: |
+          export CANDIDATE_SHA="$(git -C plan-candidate rev-parse HEAD)"
+          BASELINE_SHA=""
+          if [[ -d plan-baseline ]]; then
+            BASELINE_SHA="$(git -C plan-baseline rev-parse HEAD)"
+          fi
+          export BASELINE_SHA
+          python3 -B -m scripts.native_spi.pr_plan
+
   emulator-checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
@@ -68,7 +115,7 @@ jobs:
             scripts.native_spi.test_extended_scenarios \
             scripts.native_spi.test_safety_scenarios \
             scripts.native_spi.test_runtime_scenarios scripts.native_spi.test_cosim \
-            scripts.native_spi.test_pr_suite
+            scripts.native_spi.test_pr_suite scripts.native_spi.test_pr_plan
       - name: Test the native models
         shell: bash
         run: |
@@ -80,6 +127,7 @@ jobs:
           "$RUNNER_TEMP/test_scenarios"
 
   q-duo-firmware:
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -88,13 +136,13 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/build-q-duo
         with:
-          ref: ${{ inputs.openquatt_ref || 'b215a3511ab7c05d9a0bad782b894420a98cbcef' }}
+          ref: ${{ needs.plan.outputs.candidate }}
           role: candidate
-          artifact_suffix: ${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
+          artifact_suffix: ${{ needs.plan.outputs.artifact_key }}
 
   q-duo-baseline:
-    if: ${{ inputs.baseline_ref != '' }}
-    needs: q-duo-firmware
+    if: ${{ needs.plan.outputs.baseline != '' && needs.plan.outputs.baseline != needs.plan.outputs.candidate }}
+    needs: [plan, q-duo-firmware]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -103,16 +151,19 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/build-q-duo
         with:
-          ref: ${{ inputs.baseline_ref }}
+          ref: ${{ needs.plan.outputs.baseline }}
           role: baseline
-          artifact_suffix: ${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
+          artifact_suffix: ${{ needs.plan.outputs.artifact_key }}
 
   q-duo-hil:
-    needs: [emulator-checks, q-duo-firmware, q-duo-baseline]
+    needs: [plan, emulator-checks, q-duo-firmware, q-duo-baseline]
     if: >-
-      ${{ !cancelled() && needs.emulator-checks.result == 'success' && needs.q-duo-firmware.result == 'success' &&
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.emulator-checks.result == 'success' && needs.q-duo-firmware.result == 'success' &&
           (needs.q-duo-baseline.result == 'success' || needs.q-duo-baseline.result == 'skipped') }}
-    runs-on: ${{ (inputs.profile == 'modbus' || inputs.profile == 'energie' || inputs.profile == 'regeling' || inputs.profile == 'alles') && 'macos-15' || inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v6
@@ -123,12 +174,12 @@ jobs:
           python-version: '3.13'
       - uses: actions/download-artifact@v7
         with:
-          name: q-duo-candidate-${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
+          name: q-duo-candidate-${{ needs.plan.outputs.artifact_key }}
           path: ${{ runner.temp }}/q-duo-candidate
       - uses: actions/download-artifact@v7
-        if: ${{ inputs.baseline_ref != '' }}
+        if: ${{ matrix.compare && needs.q-duo-baseline.result == 'success' }}
         with:
-          name: q-duo-baseline-${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
+          name: q-duo-baseline-${{ needs.plan.outputs.artifact_key }}
           path: ${{ runner.temp }}/q-duo-baseline
       - name: Install the pinned Linux runtime
         if: runner.os == 'Linux'
@@ -155,28 +206,35 @@ jobs:
       - name: Run selected Q Duo firmware tests
         shell: bash
         env:
-          PROFILE: ${{ inputs.profile || 'basis' }}
+          PROFILE: ${{ matrix.profile }}
+          COMPARE: ${{ matrix.compare }}
+          CANDIDATE_SHA: ${{ needs.plan.outputs.candidate }}
+          BASELINE_SHA: ${{ needs.plan.outputs.baseline }}
         run: |
           backend=cosim
           if [[ "$RUNNER_OS" == macOS ]]; then backend=native; fi
           output="$RUNNER_TEMP/virtual-hil-report"
           mkdir -p "$output"
           candidate="$RUNNER_TEMP/q-duo-candidate"
-          (
-            cd "$candidate"
-            shasum -a 256 -c firmware.sha256
-          )
-          cp "$candidate/source.json" "$output/source-candidate.json"
-          cp "$candidate/firmware.sha256" "$output/firmware-candidate.sha256"
-          baseline_args=()
-          baseline="$RUNNER_TEMP/q-duo-baseline"
-          if [[ -d "$baseline" ]]; then
+          verify_firmware() {
+            local folder="$1" revision="$2" role="$3"
             (
-              cd "$baseline"
+              cd "$folder"
+              test "$(jq -er '.revision' source.json)" = "$revision"
               shasum -a 256 -c firmware.sha256
             )
-            cp "$baseline/source.json" "$output/source-baseline.json"
-            cp "$baseline/firmware.sha256" "$output/firmware-baseline.sha256"
+            cp "$folder/source.json" "$output/source-$role.json"
+            cp "$folder/firmware.sha256" "$output/firmware-$role.sha256"
+            printf '%s SHA-256: %s\n' "$role" "$(cut -d ' ' -f 1 "$folder/firmware.sha256")"
+          }
+          verify_firmware "$candidate" "$CANDIDATE_SHA" candidate
+          baseline_args=()
+          if [[ "$COMPARE" == true ]]; then
+            baseline="$candidate"
+            if [[ "$BASELINE_SHA" != "$CANDIDATE_SHA" ]]; then
+              baseline="$RUNNER_TEMP/q-duo-baseline"
+            fi
+            verify_firmware "$baseline" "$BASELINE_SHA" baseline
             test "$(jq -r '.esphome' "$candidate/source.json")" = "$(jq -r '.esphome' "$baseline/source.json")" ||
               { echo "De ESPHome-versies van baseline en kandidaat verschillen."; exit 1; }
             baseline_args=(--baseline-firmware "$baseline/firmware.factory.bin")
@@ -194,7 +252,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: virtual-hil-report-${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}-${{ runner.os }}-${{ runner.arch }}
+          name: virtual-hil-report-${{ needs.plan.outputs.artifact_key }}-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}
           path: ${{ runner.temp }}/virtual-hil-report/
           if-no-files-found: warn
           retention-days: 14

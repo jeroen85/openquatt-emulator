@@ -48,7 +48,7 @@ OpenQuatt gebruikt de gewone CI-checks en gerichte regressietests. Aanvullende H
 
 De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op één Ubuntu x64-runner. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits. Tegelijk meet hij de vrije interne heap, heapmin sinds boot en het grootste vrije blok in de vensters vóór, tijdens en na overlappende SSE en downloads.
 
-Kies na de merge bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref` en het profiel voor de wijziging.
+Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref`. Gebruik `profile` voor één profiel of vul bij `profiles` bijvoorbeeld `herstart,modbus` in. Een ingevuld `profiles` krijgt voorrang. Kies `alles` afzonderlijk.
 
 | Profiel | Aanvulling op de basisrun | Backend |
 | --- | --- | --- |
@@ -59,11 +59,11 @@ Kies na de merge bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-c
 | `regeling` | Power House-vraag en Single/Duo in het milde profiel, plus flowverlies tijdens defrost en herstel | macOS |
 | `alles` | Bovenstaande proeven achter elkaar | macOS |
 
-Een andere workflow in de emulatorrepo kan dezelfde proeven via `workflow_call` starten. Gebruik daarvoor dezelfde invoervelden.
+Een andere workflow in de emulatorrepo kan dezelfde proeven via `workflow_call` starten. Gebruik daarvoor dezelfde invoervelden. De workflow bouwt de kandidaat één keer. Alle gekozen profielen gebruiken hetzelfde firmwareartefact en verifiëren de commit en SHA-256 in hun eigen rapport.
 
-Gebruik bij `basis` en `herstart` het veld `architecture` om Linux arm64 te kiezen. De andere profielen vragen een gehoste Apple Silicon-runner. Het rapport bewaart per proef de uitslag, het ruwe rapport en de firmware-identiteit. Een uitgebreide run kan door de productietimers ruim een uur duren.
+Gebruik bij `basis` en `herstart` het veld `architecture` om Linux arm64 te kiezen. De overige profielen gebruiken de macOS-uitbreiding voor OpenTherm en, bij energiehistorie, W5500 met lokale NTP. Het rapport bewaart per proef de uitslag, het ruwe rapport en de firmware-identiteit. Een uitgebreide run kan door de productietimers ruim een uur duren.
 
-Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. De workflow bouwt beide varianten na elkaar op afzonderlijke runners. Hij meet ze achter elkaar op dezelfde runner met elk een eigen flashkopie. Zij toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
+Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. Bij een andere commit bouwt GitHub één extra firmwarebin. Bij dezelfde commit meet GitHub de kandidaatbin tweemaal met een verse flashkopie. Bij meerdere profielen draait de vergelijking één keer, op een gekozen Linux-profiel als dat beschikbaar is. De baseline en kandidaat draaien achter elkaar op dezelfde runner. Het rapport toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
 
 ## Gerichte firmwareproeven
 
