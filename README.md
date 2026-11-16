@@ -35,6 +35,12 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
 .tmp/native-spi/test_scenarios
 ```
 
+## GitHub Actions
+
+De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait de runner- en modeltests op Linux x64 en macOS arm64. Een aparte job bouwt een Q Duo-factory-bin op Ubuntu en test hem op een gehoste Mac. De rooktest controleert opstarten, Wi-Fi, de web-app, de PT1000 en beide Modbus-buitenunits.
+
+Op PR’s in deze emulatorrepo gebruikt de workflow een vaste OpenQuatt-revisie. Kies in **Actions → Virtual HIL → Run workflow** een andere commit of bijvoorbeeld **refs/pull/965/merge** om de build van een OpenQuatt-PR te testen. Het artifact **virtual-hil-report** bevat de geteste bronrevisie, de firmwarehash en het resultaat. De workflow draait in de emulatorrepo en is bereikbaar voor ontwikkelaars met toegang tot die repo.
+
 ## Gevalideerd met een ongewijzigde Q Duo-bin
 
 De twee proeven gebruikten dezelfde factory-bin van OpenQuatt-dev `31282d13`. De SHA-256 van de invoer en de flashkopie bleef gelijk.
