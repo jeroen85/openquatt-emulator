@@ -33,6 +33,14 @@ def qualify(report):
         "spi": (not report.get("model_errors"), "Het native SPI/DMA-model meldde een fout."),
         "completed": (not report.get("cancelled"), "De proef is handmatig gestopt."),
     }
+    if report.get("backend") == "cosim":
+        cosim = report.get("cosim", {})
+        last_reply_ms = cosim.get("last_spi_reply_ms")
+        gates["spi"] = (
+            cosim.get("registered") is True and not cosim.get("error") and last_reply_ms is not None
+            and 0 <= report.get("guest_uptime_ms", 0) - last_reply_ms <= 15000,
+            "De MAX31865-co-simulatie leverde aan het einde geen verse SPI3-uitlezing.",
+        )
     restart = scenario == "restart"
     rebooting = restart or scenario == "energy-boundary"
     if rebooting:

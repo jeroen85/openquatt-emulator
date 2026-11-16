@@ -20,11 +20,7 @@ concurrency:
 
 jobs:
   emulator-checks:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, macos-15]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
@@ -42,19 +38,14 @@ jobs:
             scripts.native_spi.test_power_house \
             scripts.native_spi.test_extended_scenarios \
             scripts.native_spi.test_safety_scenarios \
-            scripts.native_spi.test_runtime_scenarios
+            scripts.native_spi.test_runtime_scenarios scripts.native_spi.test_cosim
       - name: Test the native models
         shell: bash
         run: |
-          sdk_flags=()
-          if [[ "$RUNNER_OS" == macOS ]]; then
-            sdk="$(xcrun --sdk macosx --show-sdk-path)"
-            sdk_flags=(-isysroot "$sdk" -isystem "$sdk/usr/include/c++/v1")
-          fi
           flags=(-std=c++17 -Wall -Wextra -Werror)
-          c++ "${sdk_flags[@]}" "${flags[@]}" scripts/native_spi/test_model.cpp -o "$RUNNER_TEMP/test_model"
+          c++ "${flags[@]}" scripts/native_spi/test_model.cpp -o "$RUNNER_TEMP/test_model"
           "$RUNNER_TEMP/test_model"
-          c++ "${sdk_flags[@]}" "${flags[@]}" scripts/native_spi/test_scenarios.cpp \
+          c++ "${flags[@]}" scripts/native_spi/test_scenarios.cpp \
             scripts/native_spi/native/odu_bridge.cpp -o "$RUNNER_TEMP/test_scenarios"
           "$RUNNER_TEMP/test_scenarios"
 
@@ -110,7 +101,11 @@ jobs:
 
   q-duo-smoke:
     needs: [emulator-checks, q-duo-firmware]
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
@@ -123,32 +118,20 @@ jobs:
         with:
           name: q-duo-factory
           path: ${{ runner.temp }}/q-duo
-      - name: Install the pinned macOS emulator
-        shell: bash
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: '1'
+      - name: Install the pinned Espressif co-simulation runtime
         run: |
-          test "$(uname -m)" = arm64
-          brew install pkgconf libslirp
-          asset=esp-emu-0.51.0-aarch64-apple-darwin
-          curl --fail --location --retry 3 --max-time 90 \
-            "https://github.com/espressif/esp-emulator/releases/download/v0.51.0/$asset.tar.gz" \
-            -o "$RUNNER_TEMP/$asset.tar.gz"
-          printf 'ab02524bd286ce84577639731d0e48d623ce9be65e45d9e1246dd220c1476102  %s\n' \
-            "$RUNNER_TEMP/$asset.tar.gz" | shasum -a 256 -c -
-          tar -xzf "$RUNNER_TEMP/$asset.tar.gz" -C "$RUNNER_TEMP" "$asset/esp-emu"
-          mkdir -p .tmp/native-spi/runtime
-          install -m 755 "$RUNNER_TEMP/$asset/esp-emu" .tmp/native-spi/runtime/esp-emu.original
+          command -v lsof >/dev/null || sudo apt-get install -y lsof
+          python -B -m scripts.native_spi.cosim_build
       - name: Boot Q Duo and check Wi-Fi, web, PT1000 and both outside units
         shell: bash
         run: |
           (
             cd "$RUNNER_TEMP/q-duo"
-            shasum -a 256 -c firmware.sha256
+            sha256sum -c firmware.sha256
           )
           mkdir -p "$RUNNER_TEMP/virtual-hil-report"
           cp "$RUNNER_TEMP/q-duo/"{source.json,firmware.sha256} "$RUNNER_TEMP/virtual-hil-report/"
-          python -B -m scripts.native_spi.run --firmware "$RUNNER_TEMP/q-duo/firmware.factory.bin" \
+          python -B -m scripts.native_spi.run --backend cosim --firmware "$RUNNER_TEMP/q-duo/firmware.factory.bin" \
             --network wifi --scenario compatibility --seconds 150 --name github-q-duo \
             | tee "$RUNNER_TEMP/virtual-hil-report/runner.log"
       - name: Collect the report
@@ -172,7 +155,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: virtual-hil-report
+          name: virtual-hil-report-${{ matrix.runner }}
           path: ${{ runner.temp }}/virtual-hil-report/
           if-no-files-found: warn
           retention-days: 14

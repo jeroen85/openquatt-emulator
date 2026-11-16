@@ -4,9 +4,11 @@ Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virt
 
 ## Installatie en gebruik
 
+De CLI-rooktest draait via co-simulatie op Linux en Apple Silicon. Voor Windows is er een route via WSL2. De uitgebreide scenario’s en desktopwerkbank gebruiken de macOS-backend. [Linux en WSL2](docs/handleiding.md#linux-en-windows-met-wsl2)
+
 De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. De CLI biedt ook een dynamische proef met OTT, OTB, compressor, flow en defrost. Je vindt er uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
 
-Start na de installatie de werkbank vanuit deze repo.
+Start op macOS na de installatie de werkbank vanuit deze repo.
 
 ```sh
 python3 -m scripts.native_spi.server
@@ -23,7 +25,7 @@ De CLI biedt ook vaste proeven voor defrostketelhulp, OpenTherm-setpointgrenzen,
 ## Emulatorcode testen
 
 ```sh
-python3 -m unittest scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios scripts.native_spi.test_safety_scenarios scripts.native_spi.test_runtime_scenarios
+python3 -m unittest scripts.native_spi.test_cosim scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios scripts.native_spi.test_safety_scenarios scripts.native_spi.test_runtime_scenarios
 mkdir -p .tmp/native-spi
 oq_sdk="$(xcrun --sdk macosx --show-sdk-path)"
 xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++17 \
@@ -37,9 +39,9 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
 
 ## GitHub Actions
 
-De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait de runner- en modeltests op Linux x64 en macOS arm64. Een aparte job bouwt een Q Duo-factory-bin op Ubuntu en test hem op een gehoste Mac. De rooktest controleert opstarten, Wi-Fi, de web-app, de PT1000 en beide Modbus-buitenunits.
+De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) bouwt op Ubuntu één Q Duo-factory-bin en test die op gehoste Linux-runners voor x64 en arm64. De rooktest controleert opstarten, Wi-Fi, de web-app, de PT1000 en beide Modbus-buitenunits. De aparte runner- en modeltests draaien op Linux x64.
 
-Op PR’s in deze emulatorrepo gebruikt de workflow een vaste OpenQuatt-revisie. Kies in **Actions → Virtual HIL → Run workflow** een andere commit of bijvoorbeeld **refs/pull/965/merge** om de build van een OpenQuatt-PR te testen. Het artifact **virtual-hil-report** bevat de geteste bronrevisie, de firmwarehash en het resultaat. De workflow draait in de emulatorrepo en is bereikbaar voor ontwikkelaars met toegang tot die repo.
+Op PR’s in deze emulatorrepo gebruikt de workflow een vaste OpenQuatt-revisie. Kies in **Actions → Virtual HIL → Run workflow** een andere OpenQuatt-commit of een ref zoals `refs/pull/965/merge`. Elk artifact met de naam `virtual-hil-report-<runner>` bevat de bronrevisie, firmwarehash en uitkomst van die runner. Ontwikkelaars met toegang tot de emulatorrepo kunnen deze workflow starten.
 
 ## Gevalideerd met een ongewijzigde Q Duo-bin
 
