@@ -39,9 +39,9 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
 
 ## GitHub Actions
 
-De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) bouwt op Ubuntu één Q Duo-factory-bin en test die op gehoste Linux-runners voor x64 en arm64. De rooktest controleert opstarten, Wi-Fi, de web-app, de PT1000 en beide Modbus-buitenunits. De aparte runner- en modeltests draaien op Linux x64.
+De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) bouwt op Ubuntu één Q Duo-factory-bin en test die standaard op Linux x64. De rooktest controleert opstarten, Wi-Fi, de web-app, de PT1000 en beide Modbus-buitenunits. De aparte runner- en modeltests draaien op Linux x64.
 
-Op PR’s in deze emulatorrepo gebruikt de workflow een vaste OpenQuatt-revisie. Kies in **Actions → Virtual HIL → Run workflow** een andere OpenQuatt-commit of een ref zoals `refs/pull/965/merge`. Elk artifact met de naam `virtual-hil-report-<runner>` bevat de bronrevisie, firmwarehash en uitkomst van die runner. Ontwikkelaars met toegang tot de emulatorrepo kunnen deze workflow starten.
+Op PR’s in deze emulatorrepo gebruikt de workflow een vaste OpenQuatt-revisie. Kies in **Actions → Virtual HIL → Run workflow** een andere OpenQuatt-commit of een ref zoals `refs/pull/965/merge`. Bij een handmatige run kun je ook arm64 kiezen. Elke run test één architectuur. Het artifact `virtual-hil-report-<architectuur>` bevat de bronrevisie, firmwarehash en uitkomst. Ontwikkelaars met toegang tot de emulatorrepo kunnen deze workflow starten.
 
 ## Gevalideerd met een ongewijzigde Q Duo-bin
 

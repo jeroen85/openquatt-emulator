@@ -10,6 +10,11 @@ on:
         description: OpenQuatt-commit, branch of refs/pull/<nummer>/merge
         type: string
         required: false
+      architecture:
+        description: Architectuur voor de Q Duo-rooktest
+        type: choice
+        default: x64
+        options: [x64, arm64]
 
 permissions:
   contents: read
@@ -101,11 +106,7 @@ jobs:
 
   q-duo-smoke:
     needs: [emulator-checks, q-duo-firmware]
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
@@ -155,7 +156,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: virtual-hil-report-${{ matrix.runner }}
+          name: virtual-hil-report-${{ runner.arch }}
           path: ${{ runner.temp }}/virtual-hil-report/
           if-no-files-found: warn
           retention-days: 14
