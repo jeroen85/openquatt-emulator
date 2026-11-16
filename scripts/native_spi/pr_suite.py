@@ -111,7 +111,7 @@ def run_suite(profile, firmware, backend, port_base, output, baseline=None):
             with baseline.open("rb") as source:
                 digest = hashlib.file_digest(source, "sha256").hexdigest()
             comparison = ("--memory-baseline", str(output / key / "report.json"),
-                          "--pr-memory-baseline-firmware-sha256", digest)
+                          "--memory-baseline-firmware-sha256", digest)
     for key in cases:
         if stop_requested:
             break

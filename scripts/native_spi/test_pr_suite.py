@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,3 +44,16 @@ class PrSuiteTest(unittest.TestCase):
         child.terminate.assert_called_once_with()
         child.wait.assert_called_once_with(timeout=25)
         kill.assert_not_called()
+
+    def test_successful_baseline_supplies_report_and_factory_hash(self):
+        memory = {"phases": {phase: dict.fromkeys(METRICS, 123) for phase in ("before", "load", "after")}}
+        result = {"title": "Geheugen", "passed": True, "reasons": [], "report": {"memory": memory}}
+        with tempfile.TemporaryDirectory() as folder, patch("scripts.native_spi.pr_suite.run_case", return_value=result) as run:
+            root = Path(folder)
+            baseline = root / "baseline.bin"
+            baseline.write_bytes(b"comparison firmware")
+            self.assertEqual(run_suite("basis", root/"candidate.bin", "cosim", 19460, root, baseline), 0)
+            self.assertEqual(run.call_args.args[-1], (
+                "--memory-baseline", str(root/"geheugen-baseline/report.json"),
+                "--memory-baseline-firmware-sha256", hashlib.sha256(b"comparison firmware").hexdigest(),
+            ))
