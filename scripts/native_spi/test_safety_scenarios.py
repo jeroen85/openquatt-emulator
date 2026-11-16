@@ -55,7 +55,7 @@ class SafetyEvidence(unittest.TestCase):
         scenario = OduLinkLoss(Path("heat"), None, None)
         frame = {"unit": 2, "at_ms": 120, "fc": 3, "register": 2099, "count": 1}
         recovery = {**frame, "at_ms": 1100, "dropped": False, "exception": 0}
-        scenario.result.update(cut_ms=100, restore_ms=1000, hp1_max_read_gap_ms=10000, recovery_probe=recovery)
+        scenario.result.update(cut_ms=100, restore_ms=1000, hp1_max_read_gap_ms=10000, recovery_reply=recovery)
         scenario.result["checkpoints"].update(duo={}, watchdog_stop={}, recovered={})
         warning = {"line": "Stop waiting for response from 2 500000us after last send", "guest_ms": 650}
         loss = {"line": "HP2 - Modbus OFFLINE", "guest_ms": 700}
@@ -73,10 +73,55 @@ class SafetyEvidence(unittest.TestCase):
         scenario.finalize(report)
         self.assertFalse(scenario.result["checks"]["planned_modbus_timeouts_only"])
         self.assertFalse(scenario.result["checks"]["firmware_detected_outage"])
-        self.assertFalse(scenario.result["checks"]["second_unit_recovers_via_probe"])
+        self.assertFalse(scenario.result["checks"]["second_unit_recovers_and_resumes_polling"])
         frame["at_ms"] = 1001
         scenario.finalize(report)
         self.assertFalse(scenario.result["checks"]["planned_drops_only"])
+        frame.update(at_ms=120, count=40)
+        scenario.finalize(report)
+        self.assertTrue(scenario.result["checks"]["planned_drops_only"])
+        self.assertFalse(scenario.result["checks"]["offline_probe_attempted"])
+
+    def test_hp2_recovery_needs_an_answer_after_reconnection_then_a_normal_poll(self):
+        reply = {"unit": 2, "at_ms": 1100, "fc": 3, "register": 2099, "count": 1,
+                 "dropped": False, "exception": 0}
+        poll = {**reply, "at_ms": 1200, "count": 40}
+        before = [
+            {"reads": 2, "watchdog_counter": 0, "fault_words": [0, 0, 0], "frequency_hz": 0},
+            {"reads": 1, "watchdog_counter": 1200, "fault_words": [0, 0, 1], "frequency_hz": 0},
+        ]
+        after = [
+            {**before[0], "reads": 3},
+            {**before[1], "reads": 4, "fault_words": [0, 0, 0], "watchdog_counter": 1, "frequency_hz": 20},
+        ]
+        for frames, passes in (
+            ([reply, poll], True),
+            ([{**reply, "fc": 6, "register": 3999}, poll], True),
+            ([{**reply, "fc": 6, "register": 3999, "unit": 1}, poll], False),
+            ([{**reply, "at_ms": 999}, poll], False),
+            ([{**reply, "exception": 2}, poll], False),
+            ([reply, {**poll, "dropped": True}], False),
+            ([reply], False),
+        ):
+            with self.subTest(frames=frames):
+                fleet = Mock()
+                fleet.snapshot.return_value = [{"protocol": {"reads": row["reads"]}, **row} for row in after]
+                peer = Mock()
+                peer.snapshot.return_value = {"recent": frames}
+                scenario = OduLinkLoss(Path("heat"), fleet, peer)
+                scenario.result.update(stage="restore", restore_ms=1000)
+                scenario.result["checkpoints"]["watchdog_stop"] = {"odu_link": before}
+                sample = {"observed_from_ms": 1150, "guest_ms": 1500,
+                          "firmware": {"flow_lph": 800, "frequency_hz": [0, 20]}}
+                scenario.sample = Mock(return_value=sample)
+                scenario.observe(None)
+                self.assertEqual(scenario.result["stage"], "restore")
+                sample["observed_from_ms"] = 1400
+                scenario.observe(None)
+                self.assertEqual(scenario.result["stage"] == "complete", passes)
+                if passes:
+                    self.assertEqual(scenario.result["recovery_reply"], frames[0])
+                    self.assertEqual(scenario.result["resumed_poll"], poll)
 
     def test_early_hp1_answers_do_not_cover_a_later_gap_in_modbus_polls(self):
         scenario = OduLinkLoss(Path("heat"), None, None)
