@@ -1,0 +1,53 @@
+name: Virtual HIL gedeelde firmware
+
+on:
+  pull_request:
+    branches: [codex/virtual-hil-github-actions]
+
+permissions:
+  contents: read
+
+jobs:
+  multiple-profiles:
+    uses: ./.github/workflows/virtual-hil.yml
+    with:
+      profiles: herstart,modbus
+      openquatt_ref: b215a3511ab7c05d9a0bad782b894420a98cbcef
+      baseline_ref: 82a840099548ccbef958bbd5fa95a68beba24d90
+  same-baseline:
+    uses: ./.github/workflows/virtual-hil.yml
+    with:
+      profile: basis
+      openquatt_ref: b215a3511ab7c05d9a0bad782b894420a98cbcef
+      baseline_ref: b215a3511ab7c05d9a0bad782b894420a98cbcef
+  verify-firmware:
+    needs: [multiple-profiles, same-baseline]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: virtual-hil-report-*
+          path: reports
+      - name: Verify the firmware hash in both profiles
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("reports")
+          herstart, = root.glob("virtual-hil-report-*-herstart-Linux-X64")
+          modbus, = root.glob("virtual-hil-report-*-modbus-macOS-ARM64")
+          basis, = root.glob("virtual-hil-report-*-basis-Linux-X64")
+          assert herstart.name.split("-")[3] == modbus.name.split("-")[3]
+
+          def firmware_hash(report, case):
+              return json.loads((report / case / "report.json").read_text())["input"]["sha256"]
+
+          shared = (herstart / "firmware-candidate.sha256").read_text().split()[0]
+          assert shared == (modbus / "firmware-candidate.sha256").read_text().split()[0]
+          assert shared == firmware_hash(herstart, "herstart") == firmware_hash(modbus, "modbus")
+          assert shared != firmware_hash(herstart, "geheugen-baseline")
+          assert not (modbus / "geheugen-baseline").exists()
+          assert firmware_hash(basis, "geheugen") == firmware_hash(basis, "geheugen-baseline")
+          print(f"Herstart en Modbus draaiden allebei Q Duo-bin {shared}")
+          print("De gelijke baseline hergebruikte de kandidaatbin")
+          PY
