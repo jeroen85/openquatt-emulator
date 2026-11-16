@@ -59,6 +59,8 @@ Kies na de merge bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-c
 | `regeling` | Power House-vraag en Single/Duo in het milde profiel, plus flowverlies tijdens defrost en herstel | macOS |
 | `alles` | Bovenstaande proeven achter elkaar | macOS |
 
+Een andere workflow in de emulatorrepo kan dezelfde proeven via `workflow_call` starten. Gebruik daarvoor dezelfde invoervelden.
+
 Gebruik bij `basis` en `herstart` het veld `architecture` om Linux arm64 te kiezen. De andere profielen vragen een gehoste Apple Silicon-runner. Het rapport bewaart per proef de uitslag, het ruwe rapport en de firmware-identiteit. Een uitgebreide run kan door de productietimers ruim een uur duren.
 
 Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. De workflow bouwt beide varianten na elkaar op afzonderlijke runners. Hij meet ze achter elkaar op dezelfde runner met elk een eigen flashkopie. Zij toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.

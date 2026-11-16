@@ -25,11 +25,26 @@ on:
         type: string
         required: false
 
+  workflow_call:
+    inputs:
+      openquatt_ref:
+        type: string
+        required: false
+      architecture:
+        type: string
+        default: x64
+      profile:
+        type: string
+        default: basis
+      baseline_ref:
+        type: string
+        required: false
+
 permissions:
   contents: read
 
 concurrency:
-  group: virtual-hil-${{ github.ref }}
+  group: virtual-hil-${{ github.ref }}-${{ inputs.profile || 'basis' }}-${{ inputs.architecture || 'x64' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
