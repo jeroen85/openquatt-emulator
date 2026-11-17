@@ -6,22 +6,10 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  firmware:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/build-q-duo
-        with:
-          ref: b215a3511ab7c05d9a0bad782b894420a98cbcef
-          role: candidate
-          artifact_suffix: ubuntu-ethernet
   ethernet:
-    needs: firmware
     runs-on: ubuntu-24.04
     timeout-minutes: 18
     steps:
@@ -34,10 +22,12 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: q-duo-candidate-ubuntu-ethernet
+          github-token: ${{ github.token }}
+          run-id: '44037070974'
           path: ${{ runner.temp }}/q-duo-candidate
       - name: Install runtime
         run: |
-          sudo apt-get install -y lsof pkg-config libslirp-dev
+          sudo apt-get install -y lsof pkg-config libslirp-dev libglib2.0-dev
           python -B -m scripts.native_spi.cosim_build
       - name: Verify Ethernet, local NTP and failover with one Q Duo factory image
         shell: bash
