@@ -48,6 +48,8 @@ OpenQuatt gebruikt de gewone CI-checks en gerichte regressietests. Aanvullende H
 
 De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op één Ubuntu x64-runner. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits. Tegelijk meet hij de vrije interne heap, heapmin sinds boot en het grootste vrije blok in de vensters vóór, tijdens en na overlappende SSE en downloads.
 
+Na afloop van een automatische run voor een PR in de emulatorrepo verschijnt één reactie met de uitslag, de geteste commit en een link naar de rapporten. Een nieuwe run of hertest werkt diezelfde reactie bij. De publicatieworkflow werkt zodra hij op de standaardbranch staat. De workflow plaatst de reactie alleen als GitHub de run aan één actuele PR in deze emulatorrepo koppelt.
+
 Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref`. Gebruik `profile` voor één profiel of vul bij `profiles` bijvoorbeeld `herstart,modbus` in. Een ingevuld `profiles` krijgt voorrang. Kies `alles` afzonderlijk.
 
 | Profiel | Aanvulling op de basisrun | Backend |

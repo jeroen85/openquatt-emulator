@@ -145,6 +145,9 @@ def run_suite(profile, firmware, backend, port_base, output, baseline=None):
     if memory_report.is_file():
         lines += ["", memory_report.read_text().rstrip()]
     (output / "summary.md").write_text("\n".join(lines) + "\n")
+    (output / "pr-result.json").write_text(json.dumps({
+        "profile": profile, "cases": {key: result["passed"] for key, result in results.items()},
+    }))
     if stop_requested:
         return 130
     return 0 if all(result["passed"] for result in results.values()) else 1
