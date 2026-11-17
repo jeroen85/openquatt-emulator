@@ -1,8 +1,10 @@
 import io
+import socket
 import struct
+import threading
 import unittest
 
-from .cosim import fields, MAX_FRAME, read_frame, spi_reply, uint, message
+from .cosim import CosimPeer, fields, MAX_FRAME, read_frame, spi_reply, uint, message
 from .memory_comparison import require_match, runtime_fingerprint
 from .qualification import qualify
 from .run import run
@@ -27,6 +29,17 @@ class CosimProtocolTest(unittest.TestCase):
             read_frame(io.BytesIO(struct.pack("<I", MAX_FRAME + 1)))
         with self.assertRaises(ValueError):
             read_frame(io.BytesIO(frame(b"\x80")))
+
+    def test_disconnect_releases_emulator_with_peer_reader_open(self):
+        peer = CosimPeer.__new__(CosimPeer)
+        peer.stopping = threading.Event()
+        peer.socket, emulator_socket = socket.socketpair()
+        with peer.socket, emulator_socket, peer.socket.makefile("rb"):
+            emulator_socket.settimeout(1)
+            peer.disconnect()
+            self.assertTrue(peer.stopping.is_set())
+            self.assertEqual(emulator_socket.recv(1), b"")
+            peer.disconnect()
 
     def test_unsupported_modes_fail_before_loading_firmware(self):
         for options in ({"network": "ethernet", "scenario": "pr-memory"}, {"memory_export": "recorder"}, {"scenario": "lowflow"}):

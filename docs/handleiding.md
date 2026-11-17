@@ -74,7 +74,20 @@ Voor Windows gebruik je Ubuntu onder WSL2. Installeer Ubuntu bijvoorbeeld met `w
 
 Kies voor de W5500-rooktest `--network ethernet`. Voor het doormeten van automatische terugval kies je `--network failover --seconds 180`. Met `--network ethernet --ntp-epoch 1768474320` controleert de rooktest tevens of de firmware de lokale klok overneemt. De tijd loopt vanaf die UTC-epoch. Het rapport bevat het aantal NTP-antwoorden en de uitgelezen firmwaretijd. Alle testservers luisteren op loopback. De lokale fixture beantwoordt DNS en NTP zelf.
 
-Voor OpenTherm, de desktopwerkbank en de profielen Modbus-uitval, regeling en energiehistorie gebruik je de lokale macOS-route uit de voorgaande sectie. Zie ook de [GitHub-profielen](scenarios.md#firmwareproeven-op-github).
+Draai de vier Ubuntu-proeven achter elkaar met dezelfde factory-bin:
+
+```sh
+python3 -m scripts.native_spi.pr_suite --backend cosim --profile uitgebreid \
+  --firmware /pad/naar/firmware.factory.bin --port-base 19600 --output ./oq-hil-resultaten
+```
+
+Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `regeling`, `energie` en `alles` de lokale macOS-backend. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
+
+#### OpenTherm-uitval en herstel op Ubuntu
+
+Deze lokale proef vergt de aparte Q Duo-labbuild uit OpenQuatt. Volg `scripts/hil/tools/README.md` in een OpenQuatt-checkout die `scripts/hil/configs/gpio_opentherm_duo.yaml` bevat. Daar staan het bouwcommando, de CLI-proef en de tijdscriteria. De firmware gebruikt GPIO-interrupts voor ontvangst en behoudt de OpenTherm-decoders en RMT voor zenden. Dit omzeilt de [RMT-ontvangstbeperking van esp-emu 1.1.0](https://github.com/espressif/esp-emulator/issues/66).
+
+De proef controleert beide digitale verbindingen, onafhankelijke onderbreking en herstel met verse waarden. De vier standaard Ubuntu-proeven gebruiken de gewone Q Duo-bin. De GPIO-proef draait afzonderlijk en houdt de warmtevraag uit.
 
 ## 2. De juiste firmware kiezen
 
@@ -150,7 +163,7 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
 
 Voor [MQTT-herverbinding](scenarios.md#mqtt-herverbinding-onder-webbelasting) en de [uur- en daggrens van de energiehistorie](scenarios.md#uur--en-daggrens-van-de-energiehistorie) kiest de CLI de lokale broker of klok. Beide proeven gebruiken Ethernet, een gewone Q Duo-factory-bin en een eigen flashkopie.
 
-De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat alle controles van de gekozen proef geslaagd zijn. Elke andere exitcode betekent dat de proef is afgebroken, een controle faalde of de runner niet kon starten. Voor een geautomatiseerde proef geef je de gewenste factory-bin door aan dezelfde CLI op een macOS-arm64-runner. Gebruik de exitcode en bewaar het rapport van die specifieke proef.
+De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat alle controles van de gekozen proef geslaagd zijn. Elke andere exitcode betekent dat de proef is afgebroken, een controle faalde of de runner niet kon starten. Voor automatisering geef je de factory-bin door aan de CLI met de backend die het scenario ondersteunt. Gebruik de exitcode en bewaar het rapport van die specifieke proef.
 
 ### Meerdere proeven tegelijk
 
@@ -172,7 +185,7 @@ python3 -m scripts.native_spi.run --firmware "/pad/naar/tweede-q-duo.factory.bin
 
 Open per terminal het `report.json` in de map die de eigen CLI als `run` meldt. De werkbank ondersteunt één actieve proef op haar vaste testpoorten `19460–19462`. Met `python3 -m scripts.native_spi.server --port 19455` wijzig je de poort van het bedienpaneel.
 
-Draai de baseline en kandidaat voor een geheugenvergelijking achter elkaar op dezelfde Mac. Houd andere emulatorruns buiten het meetvenster om de hostbelasting vergelijkbaar te houden.
+Draai de baseline en kandidaat voor een geheugenvergelijking achter elkaar op dezelfde host, met dezelfde backend. Houd andere emulatorruns buiten het meetvenster om de hostbelasting vergelijkbaar te houden.
 
 ### Compressor, flow en defrost met OpenTherm
 

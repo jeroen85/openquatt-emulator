@@ -212,7 +212,7 @@ class CosimPeer:
                 self.replies += 1
                 self.last_spi_reply_ms = event_ms
 
-    def close(self):
+    def disconnect(self):
         self.stopping.set()
         if self.socket is not None:
             try:
@@ -220,6 +220,9 @@ class CosimPeer:
             except OSError:
                 pass
             self.socket.close()
+
+    def close(self):
+        self.disconnect()
         if self.thread is not None:
             self.thread.join(timeout=5)
             if self.thread.is_alive():

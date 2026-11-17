@@ -777,6 +777,10 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             if process and report["exit_before_cleanup"] is None:
                 process.terminate()
                 report["emulator_stop_requested"] = True
+                # A pending SPI transaction can block esp-emu's signal handler
+                # from reaching shutdown while the co-simulation socket is open.
+                if cosim:
+                    cosim.disconnect()
                 report["cleanup_exit_code"] = process.wait(timeout=5)
         except subprocess.TimeoutExpired as exc:
             error("emulator stop", exc)
