@@ -1,7 +1,9 @@
 name: Virtual HIL
+run-name: ${{ github.event.action == 'labeled' && github.event.label.name != 'hil:uitgebreid' && 'Virtuele HIL · Geen proef aangevraagd' || 'Virtual HIL' }}
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
   workflow_dispatch:
@@ -51,11 +53,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: virtual-hil-${{ github.ref }}-${{ inputs.profiles || inputs.profile || 'basis' }}-${{ inputs.openquatt_ref }}-${{ inputs.baseline_ref }}-${{ inputs.architecture || 'x64' }}
+  group: virtual-hil-${{ github.ref }}-${{ inputs.profiles || inputs.profile || 'basis' }}-${{ inputs.openquatt_ref }}-${{ inputs.baseline_ref }}-${{ inputs.architecture || 'x64' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'hil:uitgebreid' && github.run_id || 'tests' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   plan:
+    if: ${{ github.event.action != 'labeled' || github.event.label.name == 'hil:uitgebreid' }}
     name: Proeven en firmwareversies kiezen
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -85,7 +88,7 @@ jobs:
         id: selection
         shell: bash
         env:
-          PROFILES: ${{ inputs.profiles || inputs.profile || 'basis' }}
+          PROFILES: ${{ inputs.profiles || inputs.profile || (contains(github.event.pull_request.labels.*.name, 'hil:uitgebreid') && 'uitgebreid' || 'basis') }}
           ARCHITECTURE: ${{ inputs.architecture || 'x64' }}
         run: |
           export CANDIDATE_SHA="$(git -C plan-candidate rev-parse HEAD)"
@@ -97,6 +100,7 @@ jobs:
           python3 -B -m scripts.native_spi.pr_plan
 
   emulator-checks:
+    if: ${{ github.event.action != 'labeled' || github.event.label.name == 'hil:uitgebreid' }}
     name: Emulator controleren
     runs-on: ubuntu-24.04
     timeout-minutes: 8

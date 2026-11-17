@@ -15,6 +15,7 @@ import zlib
 from .pr_suite import CASES, PROFILES
 
 WORKFLOW = ".github/workflows/virtual-hil.yml"
+SKIPPED_TITLE = "Virtuele HIL · Geen proef aangevraagd"
 BOT = "github-actions[bot]"
 MARKER = re.compile(r"<!-- openquatt-virtual-hil run=(\d+) attempt=(\d+) -->")
 ARTIFACT = re.compile(r"virtual-hil-pr-result-[0-9a-f]{16}-([a-z]+)-(\d+)")
@@ -104,6 +105,11 @@ def version(run):
     return run["run_number"], run["run_attempt"]
 
 
+def reportable(run):
+    return (run.get("path") == WORKFLOW and run.get("event") == "pull_request"
+            and run.get("status") == "completed" and run.get("display_title") != SKIPPED_TITLE)
+
+
 def latest_for_pr(api, run, pr, repository_id):
     head_sha = pr["head"]["sha"]
     if not SHA.fullmatch(head_sha):
@@ -112,8 +118,7 @@ def latest_for_pr(api, run, pr, repository_id):
     path = f"/actions/workflows/{run['workflow_id']}/runs?{query}"
     candidates = api.json(path)["workflow_runs"]
     return max((candidate for candidate in [run, *candidates]
-                if candidate.get("path") == WORKFLOW and candidate.get("event") == "pull_request"
-                and candidate.get("status") == "completed" and matches(pr, candidate, repository_id)),
+                if reportable(candidate) and matches(pr, candidate, repository_id)),
                key=version, default=None)
 
 
@@ -182,8 +187,7 @@ def render(run, repository, server, profiles):
 def publish(event, repository, server, api):
     run = event["workflow_run"]
     owner = event["repository"]
-    if (owner["full_name"] != repository or run.get("path") != WORKFLOW
-            or run.get("event") != "pull_request" or run.get("status") != "completed"):
+    if owner["full_name"] != repository or not reportable(run):
         return False
 
     pr = find_pr(api, run, owner["id"])

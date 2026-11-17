@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 import zipfile
 
-from .pr_comment import GitHub, WORKFLOW, parse_result, publish
+from .pr_comment import GitHub, SKIPPED_TITLE, WORKFLOW, parse_result, publish
 
 REPO = "example/emulator"
 SERVER = "https://github.com"
@@ -126,6 +126,16 @@ class PrCommentTest(unittest.TestCase):
         self.assertTrue(publish(event(), REPO, SERVER, api))
         self.assertIn("run=3 attempt=3", api.writes[0][2])
         self.assertIn("**Geslaagd**", api.writes[0][2])
+
+    def test_unrelated_label_does_not_publish_or_replace_the_test_report(self):
+        api = FakeGitHub()
+        skipped = {**event()["workflow_run"], "id": 43, "run_number": 4,
+                   "display_title": SKIPPED_TITLE, "conclusion": "success"}
+        api.runs = [skipped]
+        self.assertFalse(publish({**event(), "workflow_run": skipped}, REPO, SERVER, api))
+        self.assertEqual(api.writes, [])
+        self.assertTrue(publish(event(), REPO, SERVER, api))
+        self.assertIn("/actions/runs/42", api.writes[0][2])
 
     def test_late_event_for_previous_head_reports_the_current_head(self):
         api = FakeGitHub()

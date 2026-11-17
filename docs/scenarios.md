@@ -50,6 +50,8 @@ De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op é
 
 Na afloop van een automatische run voor een PR in de emulatorrepo verschijnt één reactie met de uitslag, de geteste commit en een link naar de rapporten. Een nieuwe run of hertest werkt diezelfde reactie bij. De publicatieworkflow werkt zodra hij op de standaardbranch staat. De workflow plaatst de reactie alleen als GitHub de run aan één actuele PR in deze emulatorrepo koppelt.
 
+Voeg op een emulator-PR het label `hil:uitgebreid` toe om alle Ubuntu-proeven voor die PR te starten. Zolang het label erop staat, doet de workflow dat ook bij elke nieuwe commit op de PR. Haal het label na de proef weg om bij de volgende commit terug te gaan naar `basis`.
+
 Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref`. Gebruik `profile` voor één profiel of vul bij `profiles` bijvoorbeeld `herstart,netwerk` in. Een ingevuld `profiles` krijgt voorrang. Kies `uitgebreid` afzonderlijk om alle Ubuntu-proeven op één runner achter elkaar uit te voeren.
 
 | Profiel | Aanvulling op de basisrun |
