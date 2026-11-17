@@ -60,7 +60,7 @@ Gebruik op Ubuntu 24.04:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y g++ lsof python3 git ca-certificates pkg-config libslirp-dev
+sudo apt-get install -y g++ lsof python3 git ca-certificates pkg-config libslirp-dev libglib2.0-dev
 git clone https://github.com/jeroen85/openquatt-emulator.git
 cd openquatt-emulator
 python3 -m scripts.native_spi.cosim_build

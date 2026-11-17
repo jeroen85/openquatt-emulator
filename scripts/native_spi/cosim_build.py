@@ -88,7 +88,7 @@ def ensure_cosim():
         slirp_version = subprocess.check_output(["pkg-config", "--modversion", "slirp"], text=True).strip()
         slirp_flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs", "slirp"], text=True))
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-        packages = "pkgconf libslirp" if mac else "pkg-config libslirp-dev"
+        packages = "pkgconf libslirp" if mac else "pkg-config libslirp-dev libglib2.0-dev"
         raise ValueError(f"Installeer {packages} voor de co-simulatiebackend") from exc
     identity = {"slirp": slirp_version, "slirp_flags": slirp_flags, "backend": "cosim", "platform": platform_tag, "version": VERSION, "original_sha256": executable_sha,
                 "compiler": subprocess.check_output([compiler, "--version"], text=True), "compiler_flags": flags,
