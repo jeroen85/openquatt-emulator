@@ -1,6 +1,6 @@
 # OpenQuatt Emulator gebruiken
 
-Met de emulator draai je een ongewijzigde Q Duo-factory-bin op een virtuele ESP32-S3. Je kunt zien of de firmware opstart, of de OpenQuatt web-app antwoordt en of de controller communiceert met beide virtuele buitenunits. De PT1000-fixture geeft de firmware een bekende aanvoertemperatuur. Alles draait lokaal op de Mac. Voor de proef volstaat de factory-bin.
+Met de emulator draai je een ongewijzigde Q Duo-factory-bin op een virtuele ESP32-S3. Je kunt zien of de firmware opstart, of de OpenQuatt web-app antwoordt en of de controller communiceert met beide virtuele buitenunits. De PT1000-fixture geeft de firmware een bekende aanvoertemperatuur. De virtuele proeven draaien lokaal op de testmachine. Voor de proef volstaat de factory-bin.
 
 ## 1. Installeren op een Mac met Apple Silicon
 
@@ -51,6 +51,43 @@ Gebruik exact esp-emu **0.51.0 voor macOS arm64**. De hostuitbreiding gebruikt i
 ```
 
 Wie het archief via de browser downloadt, kan het lokaal uitpakken en het bestand `esp-emu` onder dezelfde naam `.tmp/native-spi/runtime/esp-emu.original` plaatsen. Controleer met `shasum -a 256 .tmp/native-spi/runtime/esp-emu.original` of de hash overeenkomt met de tweede waarde hierboven.
+
+### Linux en Windows met WSL2
+
+De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.1.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`. De rooktest ondersteunt ook W5500-Ethernet en terugval naar Wi-Fi via dezelfde backend.
+
+Gebruik op Ubuntu 24.04:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y g++ lsof python3 git ca-certificates pkg-config libslirp-dev libglib2.0-dev
+git clone https://github.com/jeroen85/openquatt-emulator.git
+cd openquatt-emulator
+python3 -m scripts.native_spi.cosim_build
+python3 -m scripts.native_spi.run --backend cosim --firmware /pad/naar/firmware.factory.bin \
+  --network wifi --scenario compatibility --port-base 19600 --seconds 150 --name q-duo-rooktest
+```
+
+De installer controleert de SHA-256 van het officiële Espressif-archief en het uitgepakte programma. Elke run gebruikt een eigen flashkopie. Poorten zijn Wi-Fi `19600`, UART1 `19602` en co-simulatie `19603` bij bovenstaande poortbasis. De CLI meldt de rapportmap. Een geslaagde proef krijgt de uitslag `PASS_COSIM`.
+
+Voor Windows gebruik je Ubuntu onder WSL2. Installeer Ubuntu bijvoorbeeld met `wsl --install -d Ubuntu-24.04` in PowerShell, open daarna de Ubuntu-terminal en voer daar de Linux-opdrachten uit. Bewaar de checkout in je Linux-thuismap. Een bestaand firmwarebestand op de Windows-schijf kun je meegeven via `/mnt/c/...`. Deze route wacht nog op een afzonderlijke WSL2-proef. [WSL installeren](https://learn.microsoft.com/windows/wsl/install)
+
+Kies voor de W5500-rooktest `--network ethernet`. Voor het doormeten van automatische terugval kies je `--network failover --seconds 180`. Met `--network ethernet --ntp-epoch 1768474320` controleert de rooktest tevens of de firmware de lokale klok overneemt. De tijd loopt vanaf die UTC-epoch. Het rapport bevat het aantal NTP-antwoorden en de uitgelezen firmwaretijd. Alle testservers luisteren op loopback. De lokale fixture beantwoordt DNS en NTP zelf.
+
+Draai de vier Ubuntu-proeven achter elkaar met dezelfde factory-bin:
+
+```sh
+python3 -m scripts.native_spi.pr_suite --backend cosim --profile uitgebreid \
+  --firmware /pad/naar/firmware.factory.bin --port-base 19600 --output ./oq-hil-resultaten
+```
+
+Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `regeling`, `energie` en `alles` de lokale macOS-backend. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
+
+#### OpenTherm-uitval en herstel op Ubuntu
+
+Deze lokale proef vergt de aparte Q Duo-labbuild uit OpenQuatt. Volg `scripts/hil/tools/README.md` in een OpenQuatt-checkout die `scripts/hil/configs/gpio_opentherm_duo.yaml` bevat. Daar staan het bouwcommando, de CLI-proef en de tijdscriteria. De firmware gebruikt GPIO-interrupts voor ontvangst en behoudt de OpenTherm-decoders en RMT voor zenden. Dit omzeilt de [RMT-ontvangstbeperking van esp-emu 1.1.0](https://github.com/espressif/esp-emulator/issues/66).
+
+De proef controleert beide digitale verbindingen, onafhankelijke onderbreking en herstel met verse waarden. De vier standaard Ubuntu-proeven gebruiken de gewone Q Duo-bin. De GPIO-proef draait afzonderlijk en houdt de warmtevraag uit.
 
 ## 2. De juiste firmware kiezen
 
@@ -126,7 +163,7 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
 
 Voor [MQTT-herverbinding](scenarios.md#mqtt-herverbinding-onder-webbelasting) en de [uur- en daggrens van de energiehistorie](scenarios.md#uur--en-daggrens-van-de-energiehistorie) kiest de CLI de lokale broker of klok. Beide proeven gebruiken Ethernet, een gewone Q Duo-factory-bin en een eigen flashkopie.
 
-De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat alle controles van de gekozen proef geslaagd zijn. Elke andere exitcode betekent dat de proef is afgebroken, een controle faalde of de runner niet kon starten. Voor een geautomatiseerde proef geef je de gewenste factory-bin door aan dezelfde CLI op een macOS-arm64-runner. Gebruik de exitcode en bewaar het rapport van die specifieke proef.
+De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat alle controles van de gekozen proef geslaagd zijn. Elke andere exitcode betekent dat de proef is afgebroken, een controle faalde of de runner niet kon starten. Voor automatisering geef je de factory-bin door aan de CLI met de backend die het scenario ondersteunt. Gebruik de exitcode en bewaar het rapport van die specifieke proef.
 
 ### Meerdere proeven tegelijk
 
@@ -148,7 +185,7 @@ python3 -m scripts.native_spi.run --firmware "/pad/naar/tweede-q-duo.factory.bin
 
 Open per terminal het `report.json` in de map die de eigen CLI als `run` meldt. De werkbank ondersteunt één actieve proef op haar vaste testpoorten `19460–19462`. Met `python3 -m scripts.native_spi.server --port 19455` wijzig je de poort van het bedienpaneel.
 
-Draai de baseline en kandidaat voor een geheugenvergelijking achter elkaar op dezelfde Mac. Houd andere emulatorruns buiten het meetvenster om de hostbelasting vergelijkbaar te houden.
+Draai de baseline en kandidaat voor een geheugenvergelijking achter elkaar op dezelfde host, met dezelfde backend. Houd andere emulatorruns buiten het meetvenster om de hostbelasting vergelijkbaar te houden.
 
 ### Compressor, flow en defrost met OpenTherm
 

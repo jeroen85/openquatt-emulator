@@ -17,6 +17,10 @@ def acknowledged(row):
     return not row["dropped"] and not row["exception"]
 
 
+def odu_recovery_probe(row):
+    return row["unit"] == OFFLINE_UNIT and row["fc"] == 3 and row["register"] == 2099 and row["count"] == 1
+
+
 def cooling_units(sample):
     return [
         index + 1 for index, unit in enumerate(sample["odus"])
@@ -377,7 +381,8 @@ class OduLinkLoss(Dynamics):
         self.result["current"] = sample
         first, second = sample["odu_link"]
         firmware = sample["firmware"]
-        reads = [row for row in self.peer.snapshot()["recent"] if row["fc"] == 3 and acknowledged(row)]
+        responses = [row for row in self.peer.snapshot()["recent"] if acknowledged(row)]
+        reads = [row for row in responses if row["fc"] == 3]
         hp1_safe = near(first["frequency_hz"], 0, 0.5) or at_least(firmware["flow_lph"], MIN_FLOW_LPH)
         if stage == "duo":
             if self.has_flow(sample) and not (second["fault_words"][2] & 1) and all(self.heating(sample, i) for i in range(2)):
@@ -402,20 +407,23 @@ class OduLinkLoss(Dynamics):
                 self.result["stage"] = "restore"
         elif stage == "restore":
             offline = points["watchdog_stop"]["odu_link"]
-            probe = self.result.get("recovery_probe")
-            if probe is None:
-                probe = next((row for row in reads if row["unit"] == OFFLINE_UNIT
-                              and row["register"] == 2099 and row["count"] == 1
-                              and row["at_ms"] >= self.result["restore_ms"]), None)
-                if probe:
-                    self.result["recovery_probe"] = probe
-            if probe and "resumed_poll" not in self.result:
+            reply = self.result.get("recovery_reply")
+            if reply is None:
+                # A queued write can bring the controller online before the next sparse read.
+                reply = next((row for row in responses if row["unit"] == OFFLINE_UNIT
+                              and row["at_ms"] >= self.result["restore_ms"]
+                              and (odu_recovery_probe(row) or row["fc"] in (6, 16))), None)
+                if reply:
+                    self.result["recovery_reply"] = reply
+            if reply and "resumed_poll" not in self.result:
                 poll = next((row for row in reads if row["unit"] == OFFLINE_UNIT
                              and row["register"] == 2099 and row["count"] > 1
-                             and row["at_ms"] > probe["at_ms"]), None)
+                             and row["at_ms"] > reply["at_ms"]), None)
                 if poll:
                     self.result["resumed_poll"] = poll
-            if ("resumed_poll" in self.result and hp1_safe and first["reads"] > offline[0]["reads"]
+            resumed = self.result.get("resumed_poll")
+            if (resumed and sample["observed_from_ms"] >= resumed["at_ms"]
+                    and hp1_safe and first["reads"] > offline[0]["reads"]
                     and second["reads"] >= offline[1]["reads"] + 3 and second["watchdog_counter"] < 1500
                     and second["fault_words"][2] & 1 == 0 and near(firmware["frequency_hz"][1], second["frequency_hz"], 0.5)):
                 points["recovered"] = sample
@@ -440,9 +448,10 @@ class OduLinkLoss(Dynamics):
         offline_seen = planned and any(
             cut <= row["guest_ms"] < restore and "HP2 - Modbus OFFLINE" in row["line"] for row in link_events
         )
-        probe = self.result.get("recovery_probe")
-        online_seen = probe is not None and any(
-            row["guest_ms"] >= probe["at_ms"] and "HP2 - Modbus ONLINE" in row["line"] for row in link_events
+        offline_probes = [row for row in offline if odu_recovery_probe(row)]
+        reply = self.result.get("recovery_reply")
+        online_seen = reply is not None and any(
+            row["guest_ms"] >= reply["at_ms"] and "HP2 - Modbus ONLINE" in row["line"] for row in link_events
         )
         self.result["checks"] = {
             "planned_drops_only": planned and peer["dropped"] == len(offline),
@@ -451,5 +460,6 @@ class OduLinkLoss(Dynamics):
             "firmware_detected_outage": bool(offline_seen),
             "first_unit_kept_responding": "watchdog_stop" in points
             and self.result["hp1_max_read_gap_ms"] <= MAX_HP1_READ_GAP_MS,
-            "second_unit_recovers_via_probe": bool(online_seen) and "recovered" in points,
+            "offline_probe_attempted": planned and bool(offline_probes),
+            "second_unit_recovers_and_resumes_polling": bool(online_seen) and "recovered" in points,
         }

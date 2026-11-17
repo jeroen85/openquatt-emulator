@@ -32,15 +32,28 @@ def runtime_fingerprint(report):
         sources.extend(("run.py", "pr_workload.py", "pr_memory.py", "http_response.py"))
     if report.get("pr_memory", {}).get("plan", {}).get("export"):
         sources.append("export_memory.py")
-    fingerprint = {key: report[key] for key in ("executable_sha256", "extension_sha256", "odu_library_sha256")}
+    cosim = report.get("backend") == "cosim"
+    ethernet_cosim = cosim and settings(report)["network"] == "ethernet"
+    binaries = ["executable_sha256", "odu_library_sha256"]
+    if cosim:
+        sources.append("cosim.py")
+        if ethernet_cosim:
+            sources.append("cosim_ethernet.py")
+    else:
+        binaries.append("extension_sha256")
+    fingerprint = {key: report[key] for key in binaries}
     fingerprint.update({name: report["sources"][name] for name in sources})
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in fingerprint.values()):
         raise ValueError("Ongeldige emulatorvingerafdruk in het geheugenrapport")
+    if cosim:
+        if ethernet_cosim:
+            fingerprint["slirp"] = report["native_build"]["slirp"]
+        return {**fingerprint, "backend": "cosim", "chip": report["input"]["chip"]}
     return {**fingerprint, "slirp": report["native_build"]["slirp"], "chip": report["input"]["chip"]}
 
 
 def require_match(reference, candidate):
-    different = [key for key in reference if reference[key] != candidate[key]]
+    different = sorted(key for key in reference.keys() | candidate.keys() if reference.get(key) != candidate.get(key))
     if different:
         raise ValueError(f"De kandidaat wijkt af van de referentie voor {', '.join(different)}")
 
@@ -79,7 +92,8 @@ def read_reference(path):
         report = evidence["report"]
         gates = report["qualification"]
         firmware_sha256 = report["input"]["sha256"]
-        if (report.get("schema") != 2 or report.get("status") != "PASS_NATIVE_EXTENSION"
+        expected_status = "PASS_COSIM" if report.get("backend") == "cosim" else "PASS_NATIVE_EXTENSION"
+        if (report.get("schema") != 2 or report.get("status") != expected_status
                 or gates.get("memory") is not True or not all(value is True for value in gates.values())
                 or report.get("input_hash_unchanged") is not True or report.get("flash_file_unchanged") is not True
                 or not re.fullmatch(r"[0-9a-f]{64}", firmware_sha256)):

@@ -4,9 +4,11 @@ Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virt
 
 ## Installatie en gebruik
 
+Op Ubuntu en Apple Silicon draait de CLI via co-simulatie met esp-emu 1.1.0. Het profiel `uitgebreid` test webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en terugval naar Wi-Fi. Voor Windows is er een WSL2-route. De desktopwerkbank en de uitgebreide regelscenario’s gebruiken de lokale macOS-backend. [Installatie en profielkeuze](docs/handleiding.md#linux-en-windows-met-wsl2)
+
 De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. De CLI biedt ook een dynamische proef met OTT, OTB, compressor, flow en defrost. Je vindt er uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
 
-Start na de installatie de werkbank vanuit deze repo.
+Start op macOS na de installatie de werkbank vanuit deze repo.
 
 ```sh
 python3 -m scripts.native_spi.server
@@ -18,12 +20,14 @@ Voor de virtuele dagmeting met OpenTherm-ketel en GPIO-flow is er een aparte lab
 
 De CLI biedt een Power House-basisproef met normale vraagopbouw en -afbouw, Single/Duo-overgangen en drie temperatuurprofielen. Er zijn aanvullende proeven voor gemeten ODU-respons en tijdelijke ODU-fasen, een aparte stooklijnproef en lokale HTTPS met foutinjectie en herstel. De HTTPS-succesproef gebruikt een afzonderlijke test-CA-build. **Onbekende CA afwijzen** controleert de TLS-testopstelling met de gewone factory-bin. De [scenariohandleiding](docs/scenarios.md) beschrijft testkeuze, opdrachten en dekkingsgrenzen.
 
+Met de aparte [OpenTherm-GPIO-labbuild](docs/handleiding.md#opentherm-uitval-en-herstel-op-ubuntu) kun je op Ubuntu de digitale uitwisseling met thermostaat en ketel testen, inclusief uitval en herstel.
+
 De CLI biedt ook vaste proeven voor defrostketelhulp, OpenTherm-setpointgrenzen, herstart en OTA op een eigen flashkopie, geheugen tijdens een export, bronuitval, Modbus-uitval, dauwpuntbeveiliging, MQTT-herverbinding onder webbelasting en de uur- en daggrens van de energiehistorie. [Kies een proef bij je wijziging](docs/scenarios.md#pr-tests-kiezen)
 
 ## Emulatorcode testen
 
 ```sh
-python3 -m unittest scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios scripts.native_spi.test_safety_scenarios scripts.native_spi.test_runtime_scenarios
+python3 -m unittest scripts.native_spi.test_pr_suite scripts.native_spi.test_cosim scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios scripts.native_spi.test_safety_scenarios scripts.native_spi.test_runtime_scenarios
 mkdir -p .tmp/native-spi
 oq_sdk="$(xcrun --sdk macosx --show-sdk-path)"
 xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++17 \
@@ -34,6 +38,10 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
   -o .tmp/native-spi/test_scenarios
 .tmp/native-spi/test_scenarios
 ```
+
+## GitHub Actions
+
+De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait standaard één Q Duo-rooktest met geheugenmeting onder webbelasting op Linux x64. Kies bij een handmatige run de OpenQuatt-ref en een Ubuntu-profiel. Met `uitgebreid` draaien de vier proeven achter elkaar op één Ubuntu-runner. De geheugenproef bevat ook de rooktest. De proeven delen één Q Duo-factory-bin. Een baseline-ref leidt alleen tot een extra build als hij naar een andere OpenQuatt-commit verwijst. [Profielen en rapporten](docs/scenarios.md#firmwareproeven-op-github)
 
 ## Gevalideerd met een ongewijzigde Q Duo-bin
 

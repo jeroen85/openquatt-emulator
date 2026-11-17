@@ -1,0 +1,256 @@
+name: Virtual HIL
+run-name: ${{ github.event.action == 'labeled' && github.event.label.name != 'hil:uitgebreid' && 'Virtuele HIL · Geen proef aangevraagd' || 'Virtual HIL' }}
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      openquatt_ref:
+        description: OpenQuatt-commit, branch of refs/pull/<nummer>/merge
+        type: string
+        required: false
+      architecture:
+        description: Architectuur voor de Ubuntu-proeven
+        type: choice
+        default: x64
+        options: [x64, arm64]
+      profile:
+        description: Aanvullende firmwareproeven
+        type: choice
+        default: basis
+        options: [basis, herstart, netwerk, uitgebreid]
+      profiles:
+        description: Meerdere profielen, kommagescheiden. Overschrijft profile.
+        type: string
+        required: false
+      baseline_ref:
+        description: Optionele OpenQuatt-ref voor de geheugenvergelijking
+        type: string
+        required: false
+
+  workflow_call:
+    inputs:
+      openquatt_ref:
+        type: string
+        required: false
+      architecture:
+        type: string
+        default: x64
+      profile:
+        type: string
+        default: basis
+      profiles:
+        type: string
+        required: false
+      baseline_ref:
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: virtual-hil-${{ github.ref }}-${{ inputs.profiles || inputs.profile || 'basis' }}-${{ inputs.openquatt_ref }}-${{ inputs.baseline_ref }}-${{ inputs.architecture || 'x64' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'hil:uitgebreid' && github.run_id || 'tests' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  plan:
+    if: ${{ github.event.action != 'labeled' || github.event.label.name == 'hil:uitgebreid' }}
+    name: Proeven en firmwareversies kiezen
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.selection.outputs.matrix }}
+      candidate: ${{ steps.selection.outputs.candidate }}
+      baseline: ${{ steps.selection.outputs.baseline }}
+      artifact_key: ${{ steps.selection.outputs.artifact_key }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: OpenQuatt/OpenQuatt
+          ref: ${{ inputs.openquatt_ref || 'b215a3511ab7c05d9a0bad782b894420a98cbcef' }}
+          path: plan-candidate
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        if: ${{ inputs.baseline_ref != '' }}
+        with:
+          repository: OpenQuatt/OpenQuatt
+          ref: ${{ inputs.baseline_ref }}
+          path: plan-baseline
+          persist-credentials: false
+      - name: Resolve revisions and select profiles
+        id: selection
+        shell: bash
+        env:
+          PROFILES: ${{ inputs.profiles || inputs.profile || (contains(github.event.pull_request.labels.*.name, 'hil:uitgebreid') && 'uitgebreid' || 'basis') }}
+          ARCHITECTURE: ${{ inputs.architecture || 'x64' }}
+        run: |
+          export CANDIDATE_SHA="$(git -C plan-candidate rev-parse HEAD)"
+          BASELINE_SHA=""
+          if [[ -d plan-baseline ]]; then
+            BASELINE_SHA="$(git -C plan-baseline rev-parse HEAD)"
+          fi
+          export BASELINE_SHA
+          python3 -B -m scripts.native_spi.pr_plan
+
+  emulator-checks:
+    if: ${{ github.event.action != 'labeled' || github.event.label.name == 'hil:uitgebreid' }}
+    name: Emulator controleren
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Test the runner and scenarios
+        run: |
+          python -B -m unittest \
+            scripts.native_spi.test_tooling \
+            scripts.native_spi.test_pr_memory \
+            scripts.native_spi.test_scenarios \
+            scripts.native_spi.test_power_house \
+            scripts.native_spi.test_extended_scenarios \
+            scripts.native_spi.test_safety_scenarios \
+            scripts.native_spi.test_runtime_scenarios scripts.native_spi.test_cosim \
+            scripts.native_spi.test_pr_suite scripts.native_spi.test_pr_plan scripts.native_spi.test_pr_comment
+      - name: Test the native models
+        shell: bash
+        run: |
+          flags=(-std=c++17 -Wall -Wextra -Werror)
+          c++ "${flags[@]}" scripts/native_spi/test_model.cpp -o "$RUNNER_TEMP/test_model"
+          "$RUNNER_TEMP/test_model"
+          c++ "${flags[@]}" scripts/native_spi/test_scenarios.cpp \
+            scripts/native_spi/native/odu_bridge.cpp -o "$RUNNER_TEMP/test_scenarios"
+          "$RUNNER_TEMP/test_scenarios"
+
+  q-duo-firmware:
+    name: Q Duo-firmware bouwen
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-q-duo
+        with:
+          ref: ${{ needs.plan.outputs.candidate }}
+          role: candidate
+          artifact_suffix: ${{ needs.plan.outputs.artifact_key }}
+
+  q-duo-baseline:
+    name: Referentiefirmware bouwen
+    if: ${{ needs.plan.outputs.baseline != '' && needs.plan.outputs.baseline != needs.plan.outputs.candidate }}
+    needs: [plan, q-duo-firmware]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-q-duo
+        with:
+          ref: ${{ needs.plan.outputs.baseline }}
+          role: baseline
+          artifact_suffix: ${{ needs.plan.outputs.artifact_key }}
+
+  q-duo-hil:
+    name: Q Duo · ${{ matrix.label }}
+    needs: [plan, emulator-checks, q-duo-firmware, q-duo-baseline]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.emulator-checks.result == 'success' && needs.q-duo-firmware.result == 'success' &&
+          (needs.q-duo-baseline.result == 'success' || needs.q-duo-baseline.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          name: q-duo-candidate-${{ needs.plan.outputs.artifact_key }}
+          path: ${{ runner.temp }}/q-duo-candidate
+      - uses: actions/download-artifact@v7
+        if: ${{ matrix.compare && needs.q-duo-baseline.result == 'success' }}
+        with:
+          name: q-duo-baseline-${{ needs.plan.outputs.artifact_key }}
+          path: ${{ runner.temp }}/q-duo-baseline
+      - name: Install the pinned Linux runtime
+        run: |
+          sudo apt-get install -y lsof pkg-config libslirp-dev libglib2.0-dev
+          python -B -m scripts.native_spi.cosim_build
+      - name: Run selected Q Duo firmware tests
+        shell: bash
+        env:
+          PROFILE: ${{ matrix.profile }}
+          COMPARE: ${{ matrix.compare }}
+          CANDIDATE_SHA: ${{ needs.plan.outputs.candidate }}
+          BASELINE_SHA: ${{ needs.plan.outputs.baseline }}
+        run: |
+          output="$RUNNER_TEMP/virtual-hil-report"
+          mkdir -p "$output"
+          candidate="$RUNNER_TEMP/q-duo-candidate"
+          verify_firmware() {
+            local folder="$1" revision="$2" role="$3"
+            (
+              cd "$folder"
+              test "$(jq -er '.revision' source.json)" = "$revision"
+              shasum -a 256 -c firmware.sha256
+            )
+            cp "$folder/source.json" "$output/source-$role.json"
+            cp "$folder/firmware.sha256" "$output/firmware-$role.sha256"
+            printf '%s SHA-256: %s\n' "$role" "$(cut -d ' ' -f 1 "$folder/firmware.sha256")"
+          }
+          verify_firmware "$candidate" "$CANDIDATE_SHA" candidate
+          baseline_args=()
+          if [[ "$COMPARE" == true ]]; then
+            baseline="$candidate"
+            if [[ "$BASELINE_SHA" != "$CANDIDATE_SHA" ]]; then
+              baseline="$RUNNER_TEMP/q-duo-baseline"
+            fi
+            verify_firmware "$baseline" "$BASELINE_SHA" baseline
+            test "$(jq -r '.esphome' "$candidate/source.json")" = "$(jq -r '.esphome' "$baseline/source.json")" ||
+              { echo "De ESPHome-versies van baseline en kandidaat verschillen."; exit 1; }
+            baseline_args=(--baseline-firmware "$baseline/firmware.factory.bin")
+          fi
+          python -B -m scripts.native_spi.pr_suite --profile "$PROFILE" --backend cosim \
+            --firmware "$candidate/firmware.factory.bin" --output "$output" "${baseline_args[@]}"
+      - name: Publish the suite summary
+        if: always()
+        shell: bash
+        run: |
+          summary="$RUNNER_TEMP/virtual-hil-report/summary.md"
+          if [[ -f "$summary" ]]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: virtual-hil-report-${{ needs.plan.outputs.artifact_key }}-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/virtual-hil-report/
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: virtual-hil-pr-result-${{ needs.plan.outputs.artifact_key }}-${{ matrix.profile }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/virtual-hil-report/pr-result.json
+            ${{ runner.temp }}/virtual-hil-report/source-candidate.json
+          if-no-files-found: ignore
+          retention-days: 2

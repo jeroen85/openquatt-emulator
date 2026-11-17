@@ -1,6 +1,6 @@
 # Vaste regressiescenario’s
 
-Gebruik deze CLI-proeven voor wijzigingen aan onder meer Power House, stooklijnbedrijf, OpenTherm, herstarts en netwerkverkeer. De firmwareproeven laden de gekozen Q Duo-factory-bin rechtstreeks, behalve de lokale HTTPS-succesproef: die gebruikt een afzonderlijke Q Duo-testbuild met een eigen test-CA. Een ELF of debugger is voor geen van deze runs nodig.
+Gebruik deze CLI-proeven voor wijzigingen aan onder meer Power House, stooklijnbedrijf, OpenTherm, herstarts en netwerkverkeer. De firmwareproeven laden de gekozen Q Duo-factory-bin rechtstreeks. De lokale HTTPS-succesproef vraagt een testbuild met een eigen test-CA. OpenTherm-uitval en herstel op Ubuntu vraagt de aparte GPIO-labbuild. Een ELF of debugger is voor geen van deze runs nodig.
 
 Kies de exacte bronrevisie, bouw `configs/heatpump_controller_q/duo.yaml` en bewaar de bronrevisie, configuratie, ESPHome-/ESP-IDF-versie en SHA-256 van de factory-bin. De imagecontrole herkent de firmwareopbouw; zij bewijst de bronrevisie niet. De [installatiehandleiding](handleiding.md) beschrijft de runtime en poorten.
 
@@ -22,7 +22,8 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | Power House-dispatch, vermogensinschatting of Single/Duo-keuze | Power House: gemeten ODU-respons (`odu-response`) | Reactie op het verschil tussen gevraagde en gemeten frequentie, Single-keuze en stop/herstart. |
 | Power House bij ontbrekende frequentie, opstartverhoging of oil return | Power House: tijdelijke ODU-fasen (`odu-transients`) | Benodigde capaciteit behouden tijdens de afwijking en terugkeren naar normaal bedrijf. |
 | Stooklijnregeling | `heating-curve` | RECOVERY/MAINTAIN, defrostblokkade, Duo-afbouw en stabiel Single. |
-| OpenTherm, compressor-, flow- of defrostkoppeling | `dynamics` | Digitale OTT/OTB-uitwisseling en de gekoppelde toestanden. |
+| OpenTherm, compressor-, flow- of defrostkoppeling | `dynamics` | Digitale OTT/OTB-uitwisseling en de gekoppelde toestanden op macOS. |
+| OpenTherm-uitval en herstel op Ubuntu | [GPIO-labproef](handleiding.md#opentherm-uitval-en-herstel-op-ubuntu) | Digitale communicatie met thermostaat en ketel en onafhankelijk herstel zonder warmtevraag. |
 | Lowflowbeveiliging of vrijgave na flowherstel | `lowflow` | Beveiligingsingreep en herstel met de vastgelegde firmwaretimers. |
 | Web, netwerk, buffers, taken of andere geheugenbeïnvloedende code | `pr-memory` met baseline en kandidaat | Vergelijkende heapmeting onder gelijktijdige web/SSE-belasting; volg de [handleiding](handleiding.md#geheugenproef-voor-een-pr). |
 | Weer-/manifestverzoeken, TLS-worker of gelijktijdige webactiviteit | `https` | Geslaagde TLS, serialisatie, verbinding afbreken en herstel met de lokale test-CA-build. |
@@ -41,6 +42,31 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 **Dekking van Power House:** de basisproef gebruikt het normale frequentiebereik en de gewone ODU-modelrespons. De aanvullende routes `odu-response` en `odu-transients` blijven gerichte regressies met geïnjecteerde afwijkingen. De basisproef stuurt externe warmtevraag via de gewone API; zij kwalificeert daarmee nog niet het interne woningmodel, leren/voorspellen of elke combinatie van niveau en temperatuur.
 
 Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. Vergelijk dan baseline en kandidaat en leg de ontbrekende fase vast; zo’n bestaande afkeur is nog geen door de PR veroorzaakte regressie. De proef krijgt daarmee geen PASS.
+
+### Firmwareproeven op GitHub
+
+OpenQuatt gebruikt de gewone CI-checks en gerichte regressietests. Aanvullende HIL-proeven volgen het risico van de wijziging. De [PR-richtlijn](https://github.com/OpenQuatt/OpenQuatt/blob/dev/CONTRIBUTING.md#pull-request-validation) behandelt aansturing en hardware apart van runtimegeheugen.
+
+De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op één Ubuntu x64-runner. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits. Tegelijk meet hij de vrije interne heap, heapmin sinds boot en het grootste vrije blok in de vensters vóór, tijdens en na overlappende SSE en downloads.
+
+Na afloop van een automatische run voor een PR in de emulatorrepo verschijnt één reactie met de uitslag, de geteste commit en een link naar de rapporten. Een nieuwe run of hertest werkt diezelfde reactie bij. De publicatieworkflow werkt zodra hij op de standaardbranch staat. De workflow plaatst de reactie alleen als GitHub de run aan één actuele PR in deze emulatorrepo koppelt.
+
+Voeg op een emulator-PR het label `hil:uitgebreid` toe om alle Ubuntu-proeven voor die PR te starten. Zolang het label erop staat, doet de workflow dat ook bij elke nieuwe commit op de PR. Haal het label na de proef weg om bij de volgende commit terug te gaan naar `basis`.
+
+Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref`. Een lege invoer gebruikt de vastgezette Q Duo-firmwarerevisie uit de workflow. Geef de actuele bronrevisie expliciet op wanneer je een firmwarewijziging wilt toetsen. Gebruik `profile` voor één profiel of vul bij `profiles` bijvoorbeeld `herstart,netwerk` in. Een ingevuld `profiles` krijgt voorrang. Kies `uitgebreid` afzonderlijk om alle Ubuntu-proeven op één runner achter elkaar uit te voeren.
+
+| Profiel | Aanvulling op de basisrun |
+| --- | --- |
+| `basis` | Rooktest en geheugen onder webbelasting |
+| `herstart` | Instelling opslaan, softwareherstart en opnieuw uitlezen |
+| `netwerk` | W5500-Ethernet, lokale NTP en terugval naar Wi-Fi |
+| `uitgebreid` | Bovenstaande proeven achter elkaar, met één basisrun |
+
+GitHub voert elk profiel op Ubuntu uit. Kies eventueel `architecture=arm64`. Andere workflows in de emulatorrepo kunnen dezelfde profielen via `workflow_call` starten. De geselecteerde profielen delen één Q Duo-factory-bin en bewaren de commit en SHA-256 in hun rapport.
+
+Gebruik voor Modbus-uitval onder warmtevraag, energiehistorie en regeling de lokale runner met `--backend native` op Apple Silicon. Daar blijven de CLI-profielen `modbus`, `energie`, `regeling` en `alles` beschikbaar. Die proeven controleren ook OpenTherm-ontvangst.
+
+Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. Bij een andere commit bouwt GitHub één extra firmwarebin. Bij dezelfde commit meet GitHub de kandidaatbin tweemaal met een verse flashkopie. Bij meerdere profielen draait de vergelijking één keer. De baseline en kandidaat draaien achter elkaar op dezelfde runner. Het rapport toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
 
 ## Gerichte firmwareproeven
 
@@ -286,7 +312,7 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
   --scenario odu-link-loss --name q-duo-odu-link-loss
 ```
 
-De proef start beide buitenunits. Alleen HP2 wordt gedurende minstens 135 gastseconden onbereikbaar gemaakt. HP1 moet blijven antwoorden. Als HP1 blijft draaien, moet de geselecteerde flow minstens 400 L/h zijn. De runner controleert na minstens 135 gastseconden of de communicatie-watchdog van het HP2-model actief is en de compressor stilstaat. OpenQuatt moet HP2 als offline herkennen en via de geplande enkelregisterproef op R2099 terugvinden. Het rapport toont de tijdelijk onbeantwoorde frames, de offline- en onlinemeldingen binnen het injectie- en herstelvenster, de grootste pauze tussen HP1-antwoorden (grens 20 gastseconden) en de hervatte HP2-telemetriepoll op Modbus. Onverwachte time-outs, bijvoorbeeld van HP1 of buiten het injectievenster, geven afkeur.
+De proef start beide buitenunits. Alleen HP2 wordt gedurende minstens 135 gastseconden onbereikbaar gemaakt. HP1 moet blijven antwoorden. Als HP1 blijft draaien, moet de geselecteerde flow minstens 400 L/h zijn. De runner controleert na minstens 135 gastseconden of de communicatie-watchdog van het HP2-model actief is en de compressor stilstaat. OpenQuatt moet HP2 als offline herkennen en tijdens de uitval een enkelregisterprobe op R2099 proberen. Na het verbinden kan een beantwoorde probe of een bevestigd schrijfcommando HP2 weer online brengen. De gewone HP2-telemetriepolls moeten daarna hervatten. Het rapport toont de tijdelijk onbeantwoorde frames, de offline- en onlinemeldingen binnen het injectie- en herstelvenster, de grootste pauze tussen HP1-antwoorden (grens 20 gastseconden) en de hervatte HP2-telemetriepoll op Modbus. Onverwachte time-outs, bijvoorbeeld van HP1 of buiten het injectievenster, geven afkeur.
 
 De virtuele watchdog volgt het gedrag van het ingebouwde ODU-model. Het testcontract in OpenQuatt staat in `openquatt/oq_HP_io.yaml` en `tests/python/test_modbus_reliability_telemetry_contract.py`.
 

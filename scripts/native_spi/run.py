@@ -1,4 +1,4 @@
-"""Run one unchanged factory image with the native S3 peripheral extension."""
+"""Run one unchanged Q Duo factory image on an ESP32-S3 emulator."""
 from __future__ import annotations
 
 import argparse
@@ -10,6 +10,7 @@ import http.client
 import io
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -27,6 +28,8 @@ import uuid
 from . import model
 from .atomic import atomic_json
 from .build import ensure, verify_original
+from .cosim import CosimPeer
+from .cosim_build import ensure_cosim
 from .dynamics import Dynamics, wire_evidence
 from .factory import factory_info
 from .http_response import bounded_response
@@ -49,7 +52,7 @@ from .thermostat_setpoint import ThermostatSetpoint
 from .restart import Restart, RESTART_CASES, ota_info
 from .export_memory import ExportMeasurement, EXPORT_PATHS
 from .safety_scenarios import DEW_CASES, DewGuard, OduLinkLoss, SourceLoss
-from .energy_boundary import CASES as ENERGY_CASES, EnergyBoundary
+from .energy_boundary import CASES as ENERGY_CASES, EnergyBoundary, parse_history
 from .mqtt_reconnect import LocalBroker, MqttReconnect
 
 SCENARIOS = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240,
@@ -135,11 +138,14 @@ def reserve_ports(ports):
 
 
 def wait_for_owned_listeners(process, ports):
+    lsof = shutil.which("lsof")
+    if lsof is None:
+        raise ValueError("lsof is nodig om de eigen emulatorpoorten te controleren")
     expected = {f"n127.0.0.1:{port}" for port in ports.values()}
     deadline = time.monotonic() + 8
     while process.poll() is None and time.monotonic() < deadline:
         status = subprocess.run(
-            ["/usr/sbin/lsof", "-nP", "-a", "-p", str(process.pid), "-iTCP", "-sTCP:LISTEN", "-Fn"],
+            [lsof, "-nP", "-a", "-p", str(process.pid), "-iTCP", "-sTCP:LISTEN", "-Fn"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2, check=False,
         )
         if expected.issubset(status.stdout.splitlines()) and process.poll() is None:
@@ -154,7 +160,18 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         baseline_firmware_sha256=None, without_overlap=False, https_fixture=None, power_house_climate=None,
         assist_case=None, handover_variant=None, restart_case=None, ota_image=None, ota_python=None,
         memory_export=None, export_min_rows=None, export_probe=False, export_seed=False, dew_case=None,
-        energy_case=None):
+        energy_case=None, backend="native", ntp_epoch=None):
+    if ntp_epoch is not None and (backend != "cosim" or scenario != "compatibility" or network != "ethernet"
+                                  or type(ntp_epoch) is not int or not 1700000000 <= ntp_epoch <= 2085976695
+                                  or measure_memory or memory_reference is not None):
+        raise ValueError("De lokale NTP-klok vereist een Q Duo-rooktest met co-simulatie op Ethernet en een geldige UTC-epoch")
+    if backend not in ("native", "cosim"):
+        raise ValueError("Ongeldige emulatorbackend")
+    if backend == "cosim" and (mode != "device" or (network != "wifi" and scenario != "compatibility")
+                               or scenario not in ("compatibility", "pr-memory", "restart")
+                               or memory_export is not None
+                               or (scenario == "restart" and restart_case != "software")):
+        raise ValueError("Co-simulatie ondersteunt de Q Duo-rooktest, pr-memory en de softwareherstart")
     if scenario in ("mqtt-reconnect", "energy-boundary") and (network != "ethernet" or mode != "device"):
         raise ValueError("Deze proef vereist de lokale Ethernet-fixture in device-modus")
     if scenario == "mqtt-reconnect":
@@ -181,7 +198,7 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Exportopties vereisen --memory-export")
     if scenario == "restart":
         restart_case = restart_case or "hard"
-        if restart_case not in RESTART_CASES or network != "ethernet":
+        if restart_case not in RESTART_CASES or (backend == "native" and network != "ethernet"):
             raise ValueError("restart vereist een bekende herstartvariant en Ethernet")
         if restart_case == "ota":
             if ota_image is None or not ota_image.is_file() or ota_python is None or not ota_python.is_file():
@@ -246,11 +263,13 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
 
     info = factory_info(firmware)
     ports = {"http": base, "uart1": base + 2}
+    if backend == "cosim":
+        ports["cosim"] = base + 3
     if network != "wifi":
         ports["ethernet"] = base + 1
     ota_identity = ota_info(ota_image, info) if ota_image is not None else None
     if restart_case or energy_case:
-        ports["control"] = base + 3
+        ports["control"] = base + (4 if backend == "cosim" else 3)
     if scenario == "mqtt-reconnect":
         ports["mqtt"] = base + 3
     if ota_identity:
@@ -264,14 +283,14 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
                          assist_case=assist_case, handover_variant=handover_variant, restart_case=restart_case,
                          ota_image=ota_image, ota_identity=ota_identity, ota_python=ota_python,
                          memory_export=memory_export, export_min_rows=export_min_rows, export_probe=export_probe,
-                         export_seed=export_seed, dew_case=dew_case, energy_case=energy_case)
+                         export_seed=export_seed, dew_case=dew_case, energy_case=energy_case, backend=backend, ntp_epoch=ntp_epoch)
 
 
 def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
               memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None, power_house_climate=None,
               assist_case=None, handover_variant=None, restart_case=None, ota_image=None,
               ota_identity=None, ota_python=None, memory_export=None, export_min_rows=None,
-              export_probe=False, export_seed=False, dew_case=None, energy_case=None):
+              export_probe=False, export_seed=False, dew_case=None, energy_case=None, backend="native", ntp_epoch=None):
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -281,8 +300,13 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     cable = out / "w5500-cable"
     probe = NetworkProbe(network, ports, cable)
 
-    executable, extension, native_build = ensure()
-    odu_library = executable.with_name("odu.dylib")
+    use_cosim = backend == "cosim"
+    if use_cosim:
+        executable, odu_library, native_build = ensure_cosim()
+        extension = None
+    else:
+        executable, extension, native_build = ensure()
+        odu_library = executable.with_name("odu.dylib")
     if mode == "baseline":
         executable = LAB / "runtime/esp-emu.original"
         verify_original(executable)
@@ -297,6 +321,10 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "native_build": native_build, "extension_sha256": sha(extension) if extension else None,
         "executable_sha256": sha(executable), "odu_library_sha256": sha(odu_library), "network": probe.result,
     }
+    if use_cosim:
+        report["backend"] = backend
+    if ntp_epoch is not None:
+        report["ntp_fixture"] = {"epoch": ntp_epoch}
     if scenario == "odu-link-loss":
         report["modbus_timing_events"] = []
         report["modbus_link_events"] = []
@@ -308,7 +336,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             (source_root / name).write_bytes(data)
         # ensure() compiled these captured native bytes into this exact cache.
         for name, expected in native_build["source_sha256"].items():
-            source = executable.parent / name
+            source = (odu_library.parent if use_cosim else executable.parent) / name
             if sha(source) != expected:
                 raise ValueError("Compiled native source snapshot changed")
             target = source_root / "native" / name
@@ -327,11 +355,13 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "--net", f"user,restrict=yes,hostfwd=tcp:127.0.0.1:{ports['http']}-:80",
         "--timeout", f"{seconds + 15}s", "--log-color", "never",
     ]
+    if use_cosim:
+        command.extend(("--cosim-tcp", f"127.0.0.1:{ports['cosim']}"))
     if restart_case or energy_case:
         command.extend(("--control-tcp", f"127.0.0.1:{ports['control']}", "--save-state"))
     atomic_json(out / "command.json", command)
     env = dict(os.environ, RUST_LOG="warn")
-    for key in ("OQ_NATIVE_GUEST_CLOCK", "OQ_NATIVE_OT_CONTROL", "DYLD_INSERT_LIBRARIES",
+    for key in ("OQ_NATIVE_GUEST_CLOCK", "OQ_NATIVE_OT_CONTROL", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD",
                 "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE",
                 "OQ_LOCAL_TLS_PORT", "OQ_LOCAL_EPOCH", "OQ_LOCAL_MQTT_PORT", "OQ_NATIVE_RTD_CONTROL",
                 "OQ_NATIVE_OTB_DISCONNECTED", "OQ_NATIVE_OTB_WATER_CONTROL",
@@ -347,12 +377,15 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     if ota_identity:
         env["OQ_NATIVE_OTA_PORT"] = str(ports["ota"])
 
+    cosim = None
     clock_path = out / "guest-clock.bin"
-    if mode == "device":
+    if mode == "device" and not use_cosim:
         clock_path.write_bytes(bytes(8))
         env["OQ_NATIVE_GUEST_CLOCK"] = str(clock_path)
 
     def guest_clock():
+        if cosim:
+            return cosim.clock_ms
         return struct.unpack("<Q", clock_path.read_bytes())[0] // 1000
 
     tls = https = None
@@ -620,6 +653,12 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             report["web_checks"] = report.get("web_checks", 0) + 1
             report["web_last_ok_s"] = round(time.monotonic() - started, 3)
             report["web_port"] = port
+            if ntp_epoch is not None and "guest_epoch_ms" not in report["ntp_fixture"]:
+                history = get("/energy/history?hours=0", timeout=2, port=port)
+                if history:
+                    epoch_ms = parse_history(history)["epoch_ms"]
+                    if ntp_epoch * 1000 <= epoch_ms <= (ntp_epoch + time.monotonic() - started + 5) * 1000:
+                        report["ntp_fixture"]["guest_epoch_ms"] = epoch_ms
             if dynamics:
                 observe_with_deadline(dynamics.observe, get, deadline, lambda: _cancel_requested or stop.is_set())
             if https:
@@ -638,6 +677,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             env.update(OQ_LOCAL_TLS_PORT=str(tls.port), OQ_LOCAL_EPOCH=str(tls.epoch))
             https = HttpsScenario(tls, guest_clock, ports["ethernet"], deadline, scenario == "https-reject")
             report["https"] = https.result
+        if use_cosim:
+            ethernet = (ports["ethernet"], cable, trace, ntp_epoch or 0) if network != "wifi" else None
+            cosim = CosimPeer(odu_library, temperature, ethernet=ethernet)
         process = subprocess.Popen(
             command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, errors="replace",
@@ -648,12 +690,17 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         reader.start()
         atomic_json(LAB / "latest-run.json", {"run": str(out), "pid": process.pid})
         print(json.dumps({"run": str(out), "pid": process.pid, "mode": mode}), flush=True)
-        wait_for_owned_listeners(process, {kind: port for kind, port in ports.items() if kind != "mqtt"})
+        other_listeners = {"mqtt", "ethernet"} if use_cosim else {"mqtt"}
+        wait_for_owned_listeners(process, {kind: port for kind, port in ports.items() if kind not in other_listeners})
         if not _cancel_requested:
+            if cosim:
+                cosim.start(ports["cosim"])
             peer.start(ports["uart1"])
         next_http = next_live = 0
         functional_complete_since = None
         while process.poll() is None and time.monotonic() < deadline and not stop.is_set() and not _cancel_requested:
+            if cosim and cosim.error:
+                raise RuntimeError(cosim.error)
             now = time.monotonic()
             if now >= next_live:
                 publish_live()
@@ -721,13 +768,19 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             report["pr_memory"] = {
                 "run_id": out.name, "plan": pr_load.schedule, "workload": workload,
                 "reset_path": "new_emulator_process_from_factory_copy",
-                "hardware_profile": "esp32s3-8M-psram-q-duo-native",
+                "hardware_profile": f"esp32s3-8M-psram-q-duo-{backend}",
             }
         peer.stop.set()
+        if cosim:
+            cosim.stopping.set()
         try:
             if process and report["exit_before_cleanup"] is None:
                 process.terminate()
                 report["emulator_stop_requested"] = True
+                # A pending SPI transaction can block esp-emu's signal handler
+                # from reaching shutdown while the co-simulation socket is open.
+                if cosim:
+                    cosim.disconnect()
                 report["cleanup_exit_code"] = process.wait(timeout=5)
         except subprocess.TimeoutExpired as exc:
             error("emulator stop", exc)
@@ -741,6 +794,13 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
 
         if reader:
             reader.join(timeout=5)
+        if cosim:
+            try:
+                if not cosim.close():
+                    raise RuntimeError("De SPI-peer stopte niet")
+            except Exception as exc:
+                error("Co-simulatie", exc)
+            report["cosim"] = cosim.evidence()
         try:
             peer.close()
         except Exception as exc:
@@ -832,7 +892,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             )
             report["qualification"], report["failure_reasons"] = qualify(report)
         accepted = all(report["qualification"].values())
-        report["status"] = "PASS_NATIVE_EXTENSION" if accepted else "NOT_QUALIFIED"
+        pass_status = "PASS_COSIM" if use_cosim else "PASS_NATIVE_EXTENSION"
+        report["status"] = pass_status if accepted else "NOT_QUALIFIED"
         if report.get("cancelled"):
             report["status"] = "STOPPED"
         if pr_load:
@@ -864,6 +925,9 @@ if __name__ == "__main__":
     parser.add_argument("--firmware", type=Path, required=True)
     parser.add_argument("--seconds", type=int)
     parser.add_argument("--mode", choices=("baseline", "trace", "device"))
+    parser.add_argument("--backend", choices=("native", "cosim"),
+                        default="cosim" if platform.system() == "Linux" else "native",
+                        help="Linux gebruikt standaard cosim, macOS de native uitbreiding")
     parser.add_argument("--port-base", type=int, default=19460)
     parser.add_argument("--name", default="factory")
     parser.add_argument("--temperature", type=float)
@@ -888,6 +952,7 @@ if __name__ == "__main__":
                         help="Vul de Vooruitblik-export via de aparte HIL-meetbuild")
     parser.add_argument("--dew-case", choices=DEW_CASES)
     parser.add_argument("--energy-case", choices=ENERGY_CASES)
+    parser.add_argument("--ntp-epoch", type=int, help="Vaste starttijd voor de lokale NTP-fixture op co-simulatie-Ethernet")
     args = parser.parse_args()
     try:
         reference = read_reference(args.memory_baseline) if args.memory_baseline is not None else None
@@ -910,7 +975,8 @@ if __name__ == "__main__":
             assist_case=args.assist_case, handover_variant=args.handover_variant,
             restart_case=args.restart_case, ota_image=args.ota_image, ota_python=args.ota_python,
             memory_export=args.memory_export, export_min_rows=args.export_min_rows, export_probe=args.export_probe,
-            export_seed=args.seed_forecast_export, dew_case=args.dew_case, energy_case=args.energy_case,
+            export_seed=args.seed_forecast_export, dew_case=args.dew_case, energy_case=args.energy_case, backend=args.backend,
+            ntp_epoch=args.ntp_epoch,
         ))
     except ValueError as exc:
         parser.error(str(exc))

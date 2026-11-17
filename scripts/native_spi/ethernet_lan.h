@@ -17,18 +17,36 @@
 #include <cstdlib>
 
 namespace oq_native {
+struct CloseLanFile {
+  void operator()(FILE* file) const noexcept { std::fclose(file); }
+};
+
 class EthernetLan {
  public:
+  struct Services {
+    unsigned long tls_port;
+    unsigned long mqtt_port;
+    unsigned long epoch;
+    unsigned long ota_port;
+  };
+
   EthernetLan(W5500& chip, int port, const char* cable_path, FILE* trace)
-      : chip_(chip), cable_path_(cable_path), trace_(trace) {
-    const auto tls = fixture_number("OQ_LOCAL_TLS_PORT", 1024, 65535);
-    const auto mqtt = fixture_number("OQ_LOCAL_MQTT_PORT", 1024, 65535);
-    const auto epoch = fixture_number("OQ_LOCAL_EPOCH", 1700000000UL, 4000000000UL);
+      : EthernetLan(chip, port, cable_path, trace,
+                    {fixture_number("OQ_LOCAL_TLS_PORT", 1024, 65535),
+                     fixture_number("OQ_LOCAL_MQTT_PORT", 1024, 65535),
+                     fixture_number("OQ_LOCAL_EPOCH", 1700000000UL, 4000000000UL),
+                     fixture_number("OQ_NATIVE_OTA_PORT", 1024, 65535)},
+                    process_clock_start()) {}
+
+  EthernetLan(W5500& chip, int port, const char* cable_path, FILE* trace, Services services,
+              std::chrono::steady_clock::time_point clock_start)
+      : chip_(chip), cable_path_(cable_path), trace_(trace), local_clock_start_(clock_start) {
+    const auto [tls, mqtt, epoch, ota] = services;
     if ((tls && !epoch) || (tls && mqtt)) throw std::runtime_error("Invalid local services combination");
     if (tls || mqtt || epoch) local_ = std::make_unique<LocalServices>(tls, epoch, mqtt);
     advance_clock_ = epoch && !tls;
     SlirpConfig config{};
-    config.version = 6;
+    config.version = std::min(6, SLIRP_CONFIG_VERSION_MAX);
     config.restricted = local_ ? 0 : 1;
     config.in_enabled = true;
     config.vnetwork = ip("10.42.0.0");
@@ -43,18 +61,19 @@ class EthernetLan {
     callbacks_.clock_get_ns = [](void*) -> int64_t {
       return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
     };
+#if SLIRP_CHECK_VERSION(4, 9, 0)
     callbacks_.register_poll_socket = [](slirp_os_socket, void*) {};
     callbacks_.unregister_poll_socket = [](slirp_os_socket, void*) {};
+#else
+    callbacks_.register_poll_fd = [](int, void*) {};
+    callbacks_.unregister_poll_fd = [](int, void*) {};
+#endif
     callbacks_.notify = [](void*) {};
     slirp_.reset(slirp_new(&config, &callbacks_, this));
     if (!slirp_ || slirp_add_hostfwd(slirp_.get(), 0, ip("127.0.0.1"), port, config.vdhcp_start, 80) != 0)
       throw std::runtime_error("Unable to listen on the W5500 HTTP port");
-    if (const char* ota = std::getenv("OQ_NATIVE_OTA_PORT")) {
-      const long ota_port = std::strtol(ota, nullptr, 10);
-      if (ota_port < 1024 || ota_port > 65535 ||
-          slirp_add_hostfwd(slirp_.get(), 0, ip("127.0.0.1"), ota_port, config.vdhcp_start, 3232) != 0)
-        throw std::runtime_error("Unable to listen on the W5500 OTA port");
-    }
+    if (ota && slirp_add_hostfwd(slirp_.get(), 0, ip("127.0.0.1"), static_cast<int>(ota), config.vdhcp_start, 3232) != 0)
+      throw std::runtime_error("Unable to listen on the W5500 OTA port");
     chip_.transmit = [this](const uint8_t* data, size_t size) {
       LocalServices::Bytes packet;
       if (local_) {
@@ -87,7 +106,11 @@ class EthernetLan {
     }
     descriptors_.clear();
     uint32_t timeout = 0;
+#if SLIRP_CHECK_VERSION(4, 9, 0)
     slirp_pollfds_fill_socket(slirp_.get(), &timeout, add_poll, this);
+#else
+    slirp_pollfds_fill(slirp_.get(), &timeout, add_poll, this);
+#endif
     const int rc = poll(descriptors_.data(), descriptors_.size(), 0);
     slirp_pollfds_poll(slirp_.get(), rc < 0, poll_result, this);
     if (now >= next_report_) {
@@ -116,7 +139,7 @@ class EthernetLan {
   std::string cable_path_;
   FILE* trace_;
   bool advance_clock_ = false;
-  Clock::time_point local_clock_start_ = process_clock_start();
+  Clock::time_point local_clock_start_;
   SlirpCb callbacks_{};
   std::unique_ptr<Slirp, decltype(&slirp_cleanup)> slirp_{nullptr, slirp_cleanup};
   std::vector<pollfd> descriptors_;
@@ -193,7 +216,7 @@ class EthernetLan {
   }
 
   void read_cable() {
-    std::unique_ptr<FILE, decltype(&std::fclose)> file(std::fopen(cable_path_.c_str(), "r"), std::fclose);
+    std::unique_ptr<FILE, CloseLanFile> file(std::fopen(cable_path_.c_str(), "r"));
     if (!file) {
       chip_.cable = false;
       return;
@@ -202,7 +225,7 @@ class EthernetLan {
     chip_.cable = command == '1';
   }
 
-  static slirp_ssize_t receive_packet(const void* data, size_t size, void* opaque) {
+  static ssize_t receive_packet(const void* data, size_t size, void* opaque) {
     auto& self = *static_cast<EthernetLan*>(opaque);
     const auto* frame = static_cast<const uint8_t*>(data);
     LocalServices::Bytes packet;
@@ -223,7 +246,7 @@ class EthernetLan {
     return size;
   }
 
-  static int add_poll(slirp_os_socket fd, int events, void* opaque) {
+  static int add_poll(int fd, int events, void* opaque) {
     auto& items = static_cast<EthernetLan*>(opaque)->descriptors_;
     short mask = 0;
     if (events & SLIRP_POLL_IN) mask |= POLLIN;
