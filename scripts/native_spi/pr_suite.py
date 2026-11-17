@@ -25,21 +25,31 @@ CASES = {
     "energie-dag": ("Energiehistorie bij dagwisseling", "ethernet", "energy-boundary", "--energy-case", "day"),
     "power-house": ("Power House-vraag en Single/Duo", "wifi", "power-house", "--power-house-climate", "mild"),
     "lowflow": ("Flowverlies tijdens defrost en herstel", "wifi", "lowflow"),
+    "ethernet-ntp": ("W5500-Ethernet en lokale tijdsynchronisatie", "ethernet", "compatibility",
+                     "--ntp-epoch", "1768474320", "--seconds", "90"),
+    "ethernet-failover": ("Automatische terugval van Ethernet naar Wi-Fi", "failover", "compatibility",
+                          "--seconds", "180"),
 }
+NETWORK_CASES = ("ethernet-ntp", "ethernet-failover")
 PROFILES = {
     "basis": (BASE,),
     "herstart": (BASE, "herstart"),
     "modbus": (BASE, "modbus"),
     "energie": (BASE, "energie-uur", "energie-dag"),
     "regeling": (BASE, "power-house", "lowflow"),
-    "alles": tuple(CASES),
+    "alles": tuple(case for case in CASES if case not in NETWORK_CASES),
+    "netwerk": (BASE, *NETWORK_CASES),
+    "uitgebreid": (BASE, "herstart", *NETWORK_CASES),
 }
+COSIM_PROFILES = ("basis", "herstart", "netwerk", "uitgebreid")
 
 
 def select_cases(profile, backend):
     cases = PROFILES[profile]
-    if backend == "cosim" and set(cases) - {BASE, "herstart"}:
-        raise ValueError("Kies de macOS-backend voor Modbus-uitval, energiehistorie of regeling.")
+    if backend == "cosim" and profile not in COSIM_PROFILES:
+        raise ValueError("Dit profiel vereist lokaal de macOS-backend.")
+    if backend == "native" and profile in ("netwerk", "uitgebreid"):
+        raise ValueError("Kies --backend cosim voor dit profiel.")
     return cases
 
 
@@ -70,7 +80,7 @@ def run_case(key, firmware, backend, port_base, folder, extra=()):
     title, network, scenario, *options = CASES[BASE if key == "geheugen-baseline" else key]
     if key == "geheugen-baseline":
         title = "Referentiemeting voor webgeheugen"
-    if backend == "cosim":
+    if backend == "cosim" and key == "herstart":
         network = "wifi"
 
     name = f"github-q-duo-{key}-{uuid.uuid4().hex[:10]}"

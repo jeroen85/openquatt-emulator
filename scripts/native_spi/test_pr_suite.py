@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from .memory_comparison import METRICS
-from .pr_suite import BASE, PROFILES, run_suite, select_cases, wait_for_case
+from .pr_suite import BASE, run_suite, select_cases, wait_for_case
 
 
 class PrSuiteTest(unittest.TestCase):
@@ -13,10 +13,16 @@ class PrSuiteTest(unittest.TestCase):
         self.assertEqual(select_cases("basis", "cosim"), (BASE,))
         self.assertEqual(select_cases("herstart", "cosim"), (BASE, "herstart"))
         all_cases = select_cases("alles", "native")
-        self.assertEqual(set(all_cases), {case for profile in PROFILES.values() for case in profile})
-        self.assertEqual(len(all_cases), len(set(all_cases)))
+        self.assertEqual(all_cases, (BASE, "herstart", "modbus", "energie-uur", "energie-dag", "power-house", "lowflow"))
         with self.assertRaisesRegex(ValueError, "macOS"):
             select_cases("modbus", "cosim")
+
+    def test_ubuntu_suite_runs_each_portable_case_once(self):
+        network = ("ethernet-ntp", "ethernet-failover")
+        self.assertEqual(select_cases("netwerk", "cosim"), (BASE, *network))
+        self.assertEqual(select_cases("uitgebreid", "cosim"), (BASE, "herstart", *network))
+        with self.assertRaisesRegex(ValueError, "cosim"):
+            select_cases("netwerk", "native")
 
     def test_failed_baseline_never_produces_a_comparison(self):
         memory = {"phases": {phase: dict.fromkeys(METRICS, 123)

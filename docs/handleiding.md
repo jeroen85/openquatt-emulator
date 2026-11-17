@@ -74,7 +74,7 @@ Voor Windows gebruik je Ubuntu onder WSL2. Installeer Ubuntu bijvoorbeeld met `w
 
 Kies voor de W5500-rooktest `--network ethernet`. Voor het doormeten van automatische terugval kies je `--network failover --seconds 180`. Met `--network ethernet --ntp-epoch 1768474320` controleert de rooktest tevens of de firmware de lokale klok overneemt. De tijd loopt vanaf die UTC-epoch. Het rapport bevat het aantal NTP-antwoorden en de uitgelezen firmwaretijd. Alle testservers luisteren op loopback. De lokale fixture beantwoordt DNS en NTP zelf.
 
-Voor OpenTherm, de desktopwerkbank en de profielen Modbus-uitval, regeling en energiehistorie gebruik je de macOS-route uit de voorgaande sectie. Zie ook de [GitHub-profielen](scenarios.md#firmwareproeven-op-github).
+Voor OpenTherm, de desktopwerkbank en de profielen Modbus-uitval, regeling en energiehistorie gebruik je de lokale macOS-route uit de voorgaande sectie. Zie ook de [GitHub-profielen](scenarios.md#firmwareproeven-op-github).
 
 ## 2. De juiste firmware kiezen
 

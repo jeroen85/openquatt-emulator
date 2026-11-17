@@ -11,7 +11,7 @@ on:
         type: string
         required: false
       architecture:
-        description: Architectuur voor de Q Duo-rooktest
+        description: Architectuur voor de Ubuntu-proeven
         type: choice
         default: x64
         options: [x64, arm64]
@@ -19,7 +19,7 @@ on:
         description: Aanvullende firmwareproeven
         type: choice
         default: basis
-        options: [basis, herstart, modbus, energie, regeling, alles]
+        options: [basis, herstart, netwerk, uitgebreid]
       profiles:
         description: Meerdere profielen, kommagescheiden. Overschrijft profile.
         type: string
@@ -164,7 +164,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 150
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -182,27 +182,9 @@ jobs:
           name: q-duo-baseline-${{ needs.plan.outputs.artifact_key }}
           path: ${{ runner.temp }}/q-duo-baseline
       - name: Install the pinned Linux runtime
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get install -y lsof pkg-config libslirp-dev libglib2.0-dev
           python -B -m scripts.native_spi.cosim_build
-      - name: Install the pinned macOS runtime
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: '1'
-        run: |
-          test "$(uname -m)" = arm64
-          brew install pkgconf libslirp
-          asset=esp-emu-0.51.0-aarch64-apple-darwin
-          curl --fail --location --retry 3 --max-time 90 \
-            "https://github.com/espressif/esp-emulator/releases/download/v0.51.0/$asset.tar.gz" \
-            -o "$RUNNER_TEMP/$asset.tar.gz"
-          printf 'ab02524bd286ce84577639731d0e48d623ce9be65e45d9e1246dd220c1476102  %s\n' \
-            "$RUNNER_TEMP/$asset.tar.gz" | shasum -a 256 -c -
-          tar -xzf "$RUNNER_TEMP/$asset.tar.gz" -C "$RUNNER_TEMP" "$asset/esp-emu"
-          mkdir -p .tmp/native-spi/runtime
-          install -m 755 "$RUNNER_TEMP/$asset/esp-emu" .tmp/native-spi/runtime/esp-emu.original
       - name: Run selected Q Duo firmware tests
         shell: bash
         env:
@@ -211,8 +193,6 @@ jobs:
           CANDIDATE_SHA: ${{ needs.plan.outputs.candidate }}
           BASELINE_SHA: ${{ needs.plan.outputs.baseline }}
         run: |
-          backend=cosim
-          if [[ "$RUNNER_OS" == macOS ]]; then backend=native; fi
           output="$RUNNER_TEMP/virtual-hil-report"
           mkdir -p "$output"
           candidate="$RUNNER_TEMP/q-duo-candidate"
@@ -239,7 +219,7 @@ jobs:
               { echo "De ESPHome-versies van baseline en kandidaat verschillen."; exit 1; }
             baseline_args=(--baseline-firmware "$baseline/firmware.factory.bin")
           fi
-          python -B -m scripts.native_spi.pr_suite --profile "$PROFILE" --backend "$backend" \
+          python -B -m scripts.native_spi.pr_suite --profile "$PROFILE" --backend cosim \
             --firmware "$candidate/firmware.factory.bin" --output "$output" "${baseline_args[@]}"
       - name: Publish the suite summary
         if: always()

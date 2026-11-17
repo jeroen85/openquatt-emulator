@@ -48,20 +48,18 @@ OpenQuatt gebruikt de gewone CI-checks en gerichte regressietests. Aanvullende H
 
 De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op één Ubuntu x64-runner. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits. Tegelijk meet hij de vrije interne heap, heapmin sinds boot en het grootste vrije blok in de vensters vóór, tijdens en na overlappende SSE en downloads.
 
-Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref`. Gebruik `profile` voor één profiel of vul bij `profiles` bijvoorbeeld `herstart,modbus` in. Een ingevuld `profiles` krijgt voorrang. Kies `alles` afzonderlijk.
+Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref`. Gebruik `profile` voor één profiel of vul bij `profiles` bijvoorbeeld `herstart,netwerk` in. Een ingevuld `profiles` krijgt voorrang. Kies `uitgebreid` afzonderlijk om alle Ubuntu-proeven op één runner achter elkaar uit te voeren.
 
-| Profiel | Aanvulling op de basisrun | Backend |
-| --- | --- | --- |
-| `basis` | Rooktest en geheugen onder webbelasting | Linux |
-| `herstart` | Instelling opslaan, softwareherstart en opnieuw uitlezen | Linux |
-| `modbus` | HP2-uitval, HP1-polls en herstel van HP2 onder warmtevraag | macOS |
-| `energie` | Uur- en dagwisseling, behoud van historie en herstel na herstart | macOS |
-| `regeling` | Power House-vraag en Single/Duo in het milde profiel, plus flowverlies tijdens defrost en herstel | macOS |
-| `alles` | Bovenstaande proeven achter elkaar | macOS |
+| Profiel | Aanvulling op de basisrun |
+| --- | --- |
+| `basis` | Rooktest en geheugen onder webbelasting |
+| `herstart` | Instelling opslaan, softwareherstart en opnieuw uitlezen |
+| `netwerk` | W5500-Ethernet, lokale NTP en terugval naar Wi-Fi |
+| `uitgebreid` | Bovenstaande proeven achter elkaar, met één basisrun |
 
-Een andere workflow in de emulatorrepo kan dezelfde proeven via `workflow_call` starten. Gebruik daarvoor dezelfde invoervelden. De workflow bouwt de kandidaat één keer. Alle gekozen profielen gebruiken hetzelfde firmwareartefact en verifiëren de commit en SHA-256 in hun eigen rapport.
+GitHub voert elk profiel op Ubuntu uit. Kies eventueel `architecture=arm64`. Andere workflows in de emulatorrepo kunnen dezelfde profielen via `workflow_call` starten. De geselecteerde profielen delen één Q Duo-factory-bin en bewaren de commit en SHA-256 in hun rapport.
 
-Gebruik bij `basis` en `herstart` het veld `architecture` om Linux arm64 te kiezen. De overige profielen gebruiken de macOS-uitbreiding voor OpenTherm en, bij energiehistorie, W5500 met lokale NTP. Het rapport bewaart per proef de uitslag, het ruwe rapport en de firmware-identiteit. Een uitgebreide run kan door de productietimers ruim een uur duren.
+Gebruik voor Modbus-uitval onder warmtevraag, energiehistorie en regeling de lokale runner met `--backend native` op Apple Silicon. Daar blijven de CLI-profielen `modbus`, `energie`, `regeling` en `alles` beschikbaar. Die proeven controleren ook OpenTherm-ontvangst.
 
 Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. Bij een andere commit bouwt GitHub één extra firmwarebin. Bij dezelfde commit meet GitHub de kandidaatbin tweemaal met een verse flashkopie. Bij meerdere profielen draait de vergelijking één keer, op een gekozen Linux-profiel als dat beschikbaar is. De baseline en kandidaat draaien achter elkaar op dezelfde runner. Het rapport toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
 
