@@ -1,0 +1,15 @@
+name: Virtual HIL alles achter elkaar
+
+on:
+  pull_request:
+    branches: [codex/virtual-hil-ubuntu-ethernet]
+
+permissions:
+  contents: read
+
+jobs:
+  alle-proeven:
+    uses: ./.github/workflows/virtual-hil.yml
+    with:
+      profile: alles
+      openquatt_ref: b215a3511ab7c05d9a0bad782b894420a98cbcef
