@@ -26,12 +26,12 @@ void oq_cosim_rtd_destroy(void* device) { delete static_cast<oq_native::Max31865
 
 namespace {
 struct CosimLan {
-  std::unique_ptr<FILE, decltype(&std::fclose)> trace;
+  std::unique_ptr<FILE, oq_native::CloseLanFile> trace;
   oq_native::W5500 chip;
   oq_native::EthernetLan lan;
 
   CosimLan(int port, const char* cable, const char* path, unsigned long epoch)
-      : trace(std::fopen(path, "w"), std::fclose),
+      : trace(std::fopen(path, "w")),
         chip(),
         lan(chip, port, cable, require_trace(), {0, 0, epoch, 0}, std::chrono::steady_clock::now()) {}
 
