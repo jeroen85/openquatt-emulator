@@ -1,4 +1,4 @@
-"""Espressif 1.0.0 co-simulation peer for the Q-edition MAX31865."""
+"""Co-simulation peer for the Q Duo MAX31865 and W5500."""
 from __future__ import annotations
 
 import ctypes
@@ -8,7 +8,7 @@ import threading
 
 from .cosim_ethernet import W5500_CLK, W5500_CS, W5500_IRQ, W5500_MISO, W5500_MOSI, Ethernet
 
-# esp-emulator v1.0.0, proto/esp_cosim.proto and docs/guides/HOST-INTERFACES.md.
+# esp-emulator 1.x, proto/esp_cosim.proto and docs/guides/HOST-INTERFACES.md.
 MAX_FRAME = 256 * 1024
 CS, CLK, MOSI, MISO = 5, 6, 7, 4
 

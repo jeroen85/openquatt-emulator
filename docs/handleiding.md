@@ -54,7 +54,7 @@ Wie het archief via de browser downloadt, kan het lokaal uitpakken en het bestan
 
 ### Linux en Windows met WSL2
 
-De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.0.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`. De rooktest ondersteunt ook W5500-Ethernet en terugval naar Wi-Fi via dezelfde backend.
+De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.1.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`. De rooktest ondersteunt ook W5500-Ethernet en terugval naar Wi-Fi via dezelfde backend.
 
 Gebruik op Ubuntu 24.04:
 

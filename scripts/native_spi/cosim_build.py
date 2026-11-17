@@ -17,20 +17,20 @@ import urllib.request
 
 from .build import LAB, ROOT, SOURCES, digest
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 RUNTIME = LAB / "runtime" / "esp-emu.cosim"
 ASSETS = {
     ("Darwin", "arm64"): (
-        "aarch64-apple-darwin", "d180f76ad6a97f811c11dd810b4a0c7dd7f57f0acd70ca570f0bb649b533dedb",
-        "cdfe1e8f3d447af4af12f0699457e958af0ea6ff8601d909079801c8655c6ef5",
+        "aarch64-apple-darwin", "8bf2bd236c3bf472e8327e3b784bc2901e0ec5c65b5cbf68b4cdd6d0974264bc",
+        "633a35f993300a765634ed78a2dbcfd5ffcd5c3f2f354a2dddabeb6108240828",
     ),
     ("Linux", "x86_64"): (
-        "x86_64-unknown-linux-gnu", "bbc05bcbee298ac66070cd16d688de51721c828ad4a77f382ab4d4b25e6f42b5",
-        "41f543bafef39b22641378bc0b361ba3ce39bf4501be0b11f7019fe6e9a04257",
+        "x86_64-unknown-linux-gnu", "bcb940dcf48aa6a1b62dbdc4abc37f05431710f4040d9e2504723a5ea4fd5de9",
+        "952ff6ed45475f45089e26acc9926c9781fdd7a72925a24e613f035aaf084822",
     ),
     ("Linux", "aarch64"): (
-        "aarch64-unknown-linux-gnu", "b9b7879bfd13aff0674f28c54c5f40316a5f1a63605678ab2d085f30552cfa96",
-        "d228c4986140afe9fc13d75af515196f5c4d4b1134ed26b16fd84d7314a6f7a5",
+        "aarch64-unknown-linux-gnu", "425f78e54470e46fc523f44787659a0c6f845295a42694fa51fbefa87c4b7ce7",
+        "b18769263229d32395659a7ad5afe167351779f83c25b188f31aea0879c329b0",
     ),
 }
 MODEL_SOURCES = tuple(name for name in SOURCES if name.startswith(("native/", "vendor/odu/"))) + (
