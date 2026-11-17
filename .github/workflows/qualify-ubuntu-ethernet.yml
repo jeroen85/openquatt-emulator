@@ -1,0 +1,79 @@
+name: Virtual HIL Ubuntu Ethernet
+
+on:
+  pull_request:
+    branches: [codex/virtual-hil-ubuntu-ethernet]
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-q-duo
+        with:
+          ref: b215a3511ab7c05d9a0bad782b894420a98cbcef
+          role: candidate
+          artifact_suffix: ubuntu-ethernet
+  ethernet:
+    needs: firmware
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          name: q-duo-candidate-ubuntu-ethernet
+          path: ${{ runner.temp }}/q-duo-candidate
+      - name: Install runtime
+        run: |
+          sudo apt-get install -y lsof pkg-config libslirp-dev
+          python -B -m scripts.native_spi.cosim_build
+      - name: Verify Ethernet, local NTP and failover with one Q Duo factory image
+        shell: bash
+        run: |
+          firmware="$RUNNER_TEMP/q-duo-candidate"
+          (cd "$firmware" && shasum -a 256 -c firmware.sha256)
+          python -B -m scripts.native_spi.run --firmware "$firmware/firmware.factory.bin" \
+            --backend cosim --network ethernet --scenario compatibility --ntp-epoch 1768474320 \
+            --seconds 90 --name qualify-ethernet
+          python -B -m scripts.native_spi.run --firmware "$firmware/firmware.factory.bin" \
+            --backend cosim --network failover --scenario compatibility --seconds 180 --name qualify-failover
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(".tmp/native-spi/runs")
+          output = Path(os.environ["RUNNER_TEMP"]) / "network-summary.md"
+          lines = ["## Ubuntu Q Duo netwerkproeven", ""]
+          expected = (Path(os.environ["RUNNER_TEMP"]) / "q-duo-candidate/firmware.sha256").read_text().split()[0]
+          for name, gates in (("ethernet", ("ethernet", "local_ntp")), ("failover", ("ethernet", "failover"))):
+              path, = root.glob(f"qualify-{name}-*/report.json")
+              report = json.loads(path.read_text())
+              assert report["input"]["sha256"] == expected and report["input_hash_unchanged"]
+              assert all(report["qualification"][gate] is True for gate in gates)
+              detail = report["ntp_fixture"] if name == "ethernet" else {
+                  "seconds_to_wifi": round(report["network"]["wifi_restored_s"] - report["network"]["cable_cut_s"], 2),
+                  "wifi_checks": report["network"]["wifi_recovery_checks"],
+              }
+              lines.append(f"- {name} geslaagd met `{expected}` en libslirp {report['native_build']['slirp']}. {detail}")
+          output.write_text("\n".join(lines) + "\n")
+          PY
+          cat "$RUNNER_TEMP/network-summary.md" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: ubuntu-network-reports
+          path: |
+            .tmp/native-spi/runs/**/report.json
+            ${{ runner.temp }}/network-summary.md
+          include-hidden-files: true
