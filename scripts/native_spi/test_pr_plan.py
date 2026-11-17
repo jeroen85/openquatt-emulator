@@ -1,10 +1,15 @@
 import json
 import unittest
 
-from .pr_plan import workflow_plan
+from .pr_plan import PROFILE_LABELS, workflow_plan
+from .pr_suite import PROFILES
 
 
 class WorkflowPlanTest(unittest.TestCase):
+    def test_each_profile_has_its_own_check_name(self):
+        self.assertEqual(PROFILE_LABELS.keys(), PROFILES.keys())
+        self.assertEqual(len(set(PROFILE_LABELS.values())), len(PROFILES))
+
     def test_profiles_share_artifact_key_and_compare_on_one_runner(self):
         plan = workflow_plan("modbus, herstart, energie, herstart", "arm64", "a" * 40, "b" * 40)
         jobs = json.loads(plan["matrix"])["include"]
