@@ -117,7 +117,7 @@ jobs:
             scripts.native_spi.test_extended_scenarios \
             scripts.native_spi.test_safety_scenarios \
             scripts.native_spi.test_runtime_scenarios scripts.native_spi.test_cosim \
-            scripts.native_spi.test_pr_suite scripts.native_spi.test_pr_plan
+            scripts.native_spi.test_pr_suite scripts.native_spi.test_pr_plan scripts.native_spi.test_pr_comment
       - name: Test the native models
         shell: bash
         run: |
@@ -241,3 +241,12 @@ jobs:
           path: ${{ runner.temp }}/virtual-hil-report/
           if-no-files-found: warn
           retention-days: 14
+      - uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: virtual-hil-pr-result-${{ needs.plan.outputs.artifact_key }}-${{ matrix.profile }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/virtual-hil-report/pr-result.json
+            ${{ runner.temp }}/virtual-hil-report/source-candidate.json
+          if-no-files-found: ignore
+          retention-days: 2

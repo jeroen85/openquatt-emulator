@@ -1,0 +1,31 @@
+name: Virtuele HIL · PR-reactie
+
+on:
+  workflow_run:
+    workflows: [Virtual HIL]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: virtual-hil-pr-comment-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Uitslag op de PR plaatsen
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/virtual-hil.yml' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Plaats of werk de PR-reactie bij
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B -m scripts.native_spi.pr_comment

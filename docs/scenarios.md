@@ -48,6 +48,8 @@ OpenQuatt gebruikt de gewone CI-checks en gerichte regressietests. Aanvullende H
 
 De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op één Ubuntu x64-runner. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits. Tegelijk meet hij de vrije interne heap, heapmin sinds boot en het grootste vrije blok in de vensters vóór, tijdens en na overlappende SSE en downloads.
 
+Na afloop van een automatische run voor een PR in de emulatorrepo verschijnt één reactie met de uitslag, de geteste commit en een link naar de rapporten. Een nieuwe run of hertest werkt diezelfde reactie bij. De publicatieworkflow werkt zodra hij op de standaardbranch staat. De workflow plaatst de reactie alleen als GitHub de run aan één actuele PR in deze emulatorrepo koppelt.
+
 Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref`. Gebruik `profile` voor één profiel of vul bij `profiles` bijvoorbeeld `herstart,netwerk` in. Een ingevuld `profiles` krijgt voorrang. Kies `uitgebreid` afzonderlijk om alle Ubuntu-proeven op één runner achter elkaar uit te voeren.
 
 | Profiel | Aanvulling op de basisrun |
@@ -61,7 +63,7 @@ GitHub voert elk profiel op Ubuntu uit. Kies eventueel `architecture=arm64`. And
 
 Gebruik voor Modbus-uitval onder warmtevraag, energiehistorie en regeling de lokale runner met `--backend native` op Apple Silicon. Daar blijven de CLI-profielen `modbus`, `energie`, `regeling` en `alles` beschikbaar. Die proeven controleren ook OpenTherm-ontvangst.
 
-Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. Bij een andere commit bouwt GitHub één extra firmwarebin. Bij dezelfde commit meet GitHub de kandidaatbin tweemaal met een verse flashkopie. Bij meerdere profielen draait de vergelijking één keer, op een gekozen Linux-profiel als dat beschikbaar is. De baseline en kandidaat draaien achter elkaar op dezelfde runner. Het rapport toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
+Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. Bij een andere commit bouwt GitHub één extra firmwarebin. Bij dezelfde commit meet GitHub de kandidaatbin tweemaal met een verse flashkopie. Bij meerdere profielen draait de vergelijking één keer. De baseline en kandidaat draaien achter elkaar op dezelfde runner. Het rapport toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
 
 ## Gerichte firmwareproeven
 

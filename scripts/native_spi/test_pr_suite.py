@@ -1,4 +1,5 @@
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,6 +41,8 @@ class PrSuiteTest(unittest.TestCase):
             summary = (root/"summary.md").read_text()
             self.assertIn("Ontbrekende meetdata", summary)
             self.assertIn("Q Duo-rooktest geslaagd", summary)
+            self.assertEqual(json.loads((root / "pr-result.json").read_text()),
+                             {"profile": "basis", "cases": {"geheugen-baseline": False, BASE: True}})
 
     def test_stop_gives_the_owned_runner_time_to_write_report(self):
         child = Mock()
