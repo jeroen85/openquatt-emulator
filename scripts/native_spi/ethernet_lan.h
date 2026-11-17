@@ -17,6 +17,10 @@
 #include <cstdlib>
 
 namespace oq_native {
+struct CloseLanFile {
+  void operator()(FILE* file) const noexcept { std::fclose(file); }
+};
+
 class EthernetLan {
  public:
   struct Services {
@@ -212,7 +216,7 @@ class EthernetLan {
   }
 
   void read_cable() {
-    std::unique_ptr<FILE, decltype(&std::fclose)> file(std::fopen(cable_path_.c_str(), "r"), std::fclose);
+    std::unique_ptr<FILE, CloseLanFile> file(std::fopen(cable_path_.c_str(), "r"));
     if (!file) {
       chip_.cable = false;
       return;
