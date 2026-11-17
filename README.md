@@ -4,7 +4,7 @@ Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virt
 
 ## Installatie en gebruik
 
-Op Ubuntu en Apple Silicon draait de CLI via co-simulatie met esp-emu 1.1.0. Het profiel `uitgebreid` test webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en terugval naar Wi-Fi. Voor Windows is er een WSL2-route. De desktopwerkbank en de uitgebreide regelscenario’s gebruiken de lokale macOS-backend. [Installatie en profielkeuze](docs/handleiding.md#linux-en-windows-met-wsl2)
+Op Ubuntu en Apple Silicon draait de CLI via co-simulatie met esp-emu 1.1.0. Het profiel `uitgebreid` test webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en terugval naar Wi-Fi. Voor Windows is er een WSL2-route. Power House, lowflowherstel en stooklijn zijn via co-simulatie beschikbaar met de aparte OpenTherm-GPIO-labbin. De desktopwerkbank en de overige regelscenario’s gebruiken de lokale macOS-backend. [Installatie en profielkeuze](docs/handleiding.md#linux-en-windows-met-wsl2)
 
 De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. De CLI biedt ook een dynamische proef met OTT, OTB, compressor, flow en defrost. Je vindt er uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
 
@@ -27,7 +27,7 @@ De CLI biedt ook vaste proeven voor defrostketelhulp, OpenTherm-setpointgrenzen,
 ## Emulatorcode testen
 
 ```sh
-python3 -m unittest scripts.native_spi.test_pr_suite scripts.native_spi.test_cosim scripts.native_spi.test_tooling scripts.native_spi.test_pr_memory scripts.native_spi.test_scenarios scripts.native_spi.test_power_house scripts.native_spi.test_extended_scenarios scripts.native_spi.test_safety_scenarios scripts.native_spi.test_runtime_scenarios
+python3 -m unittest discover -s scripts/native_spi -t . -p 'test_*.py'
 mkdir -p .tmp/native-spi
 oq_sdk="$(xcrun --sdk macosx --show-sdk-path)"
 xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++17 \
@@ -38,6 +38,13 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
   -o .tmp/native-spi/test_scenarios
 .tmp/native-spi/test_scenarios
 ```
+
+## Ubuntu-proeven voor HTTPS en regeling
+
+[HTTPS, Power House, lowflowherstel en stooklijn](docs/ubuntu-scenarios.md)
+draaien via de draagbare backend met geheugenmetingen en gelijktijdige
+SSE-/webbelasting. De regelproeven gebruiken de OpenTherm-GPIO-labbin.
+HTTPS gebruikt een afzonderlijke lokale test-CA-build.
 
 ## GitHub Actions
 

@@ -64,7 +64,7 @@ Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-
 
 GitHub voert elk profiel op Ubuntu uit. Kies eventueel `architecture=arm64`. Andere workflows in de emulatorrepo kunnen dezelfde profielen via `workflow_call` starten. De geselecteerde profielen delen één Q Duo-factory-bin en bewaren de commit en SHA-256 in hun rapport.
 
-Gebruik voor Modbus-uitval onder warmtevraag, energiehistorie en regeling de lokale runner met `--backend native` op Apple Silicon. Daar blijven de CLI-profielen `modbus`, `energie`, `regeling` en `alles` beschikbaar. Die proeven controleren ook OpenTherm-ontvangst.
+Gebruik voor Modbus-uitval onder warmtevraag en energiehistorie de lokale runner met `--backend native` op Apple Silicon. De CLI-profielen `modbus`, `energie`, `regeling` en `alles` blijven daar beschikbaar. [Power House, lowflowherstel en stooklijn op Ubuntu](ubuntu-scenarios.md) zijn als afzonderlijke scenario’s beschikbaar met de GPIO-labbin. HTTPS op Ubuntu gebruikt de test-CA-build. De GitHub-profielkeuze bevat de vier draagbare basisproeven.
 
 Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. Bij een andere commit bouwt GitHub één extra firmwarebin. Bij dezelfde commit meet GitHub de kandidaatbin tweemaal met een verse flashkopie. Bij meerdere profielen draait de vergelijking één keer. De baseline en kandidaat draaien achter elkaar op dezelfde runner. Het rapport toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
 
@@ -188,7 +188,7 @@ python3 -m scripts.native_spi.https_fixture \
   --firmware-root "$oq_source" --output "$oq_tls" --bind-firmware "$oq_https_bin"
 
 python3 -m scripts.native_spi.run --firmware "$oq_https_bin" \
-  --network ethernet --scenario https --https-fixture "$oq_tls" --name local-https
+  --backend cosim --network ethernet --scenario https --https-fixture "$oq_tls" --name local-https
 ```
 
 `--bind-firmware` legt de gekozen binhash naast de bronrevisie, overlay en CA vast. Controleer zelf dat dit het resultaat van de beschreven build is. De succesproef weigert een andere binhash. Genereer bij verlopen certificaten een nieuwe fixture en bouw opnieuw; omzeil de controle niet.

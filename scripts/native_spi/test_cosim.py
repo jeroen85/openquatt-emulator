@@ -42,7 +42,7 @@ class CosimProtocolTest(unittest.TestCase):
             peer.disconnect()
 
     def test_unsupported_modes_fail_before_loading_firmware(self):
-        for options in ({"network": "ethernet", "scenario": "pr-memory"}, {"memory_export": "recorder"}, {"scenario": "lowflow"}):
+        for options in ({"network": "ethernet", "scenario": "pr-memory"}, {"memory_export": "recorder"}, {"scenario": "odu-response"}):
             with self.subTest(options=options), self.assertRaisesRegex(ValueError, "Q Duo-rooktest"):
                 run(None, backend="cosim", **options)
 

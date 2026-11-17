@@ -5,12 +5,12 @@ W5500_CS, W5500_CLK, W5500_MOSI, W5500_MISO, W5500_IRQ = 13, 12, 10, 11, 9
 
 
 class Ethernet:
-    def __init__(self, library, port, cable, trace, epoch, drive):
+    def __init__(self, library, port, cable, trace, epoch, drive, tls_port=0):
         self.lib = library
         self.drive = drive
         self.irq = None
         self.transfers = 0
-        self.lib.oq_cosim_lan_create.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong]
+        self.lib.oq_cosim_lan_create.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong, ctypes.c_uint16]
         self.lib.oq_cosim_lan_create.restype = ctypes.c_void_p
         self.lib.oq_cosim_lan_service.argtypes = [ctypes.c_void_p]
         self.lib.oq_cosim_lan_service.restype = ctypes.c_int
@@ -20,7 +20,7 @@ class Ethernet:
         self.lib.oq_cosim_lan_transfer.restype = ctypes.c_int
         self.lib.oq_cosim_lan_destroy.argtypes = [ctypes.c_void_p]
         self.lib.oq_cosim_lan_destroy.restype = None
-        self.device = self.lib.oq_cosim_lan_create(port, str(cable).encode(), str(trace).encode(), epoch)
+        self.device = self.lib.oq_cosim_lan_create(port, str(cable).encode(), str(trace).encode(), epoch, tls_port)
         if not self.device:
             raise RuntimeError("W5500 kon zijn lokale Ethernetpoort niet openen")
 

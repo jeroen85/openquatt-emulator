@@ -37,6 +37,8 @@ def runtime_fingerprint(report):
     binaries = ["executable_sha256", "odu_library_sha256"]
     if cosim:
         sources.append("cosim.py")
+        if settings(report)["scenario"] == "lowflow":
+            sources.extend(("cosim_opentherm.py", "scenario_load.py"))
         if ethernet_cosim:
             sources.append("cosim_ethernet.py")
     else:

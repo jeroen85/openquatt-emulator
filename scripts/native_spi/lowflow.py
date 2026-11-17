@@ -44,10 +44,11 @@ def command_value(row, register):
 
 
 class Lowflow(Dynamics):
+    settings = Dynamics.settings + (("select", "Heating Control Mode", "Power House"),)
     def __init__(self, thermostat, fleet):
         super().__init__(thermostat, fleet)
         self.evidence = self.result["lowflow"] = {
-            "policy": {"min_flow_lph": MIN_FLOW_LPH, "fault_ms": FAULT_MS, "recovery_ms": RECOVER_MS,
+            "policy": {"control_mode": "Power House", "min_flow_lph": MIN_FLOW_LPH, "fault_ms": FAULT_MS, "recovery_ms": RECOVER_MS,
                        "minimum_off_ms": MIN_OFF_MS, "supervisory_ms": SUPERVISORY_MS, "hold_ms": HOLD_MS},
         }
         self.previous = None

@@ -30,10 +30,10 @@ struct CosimLan {
   oq_native::W5500 chip;
   oq_native::EthernetLan lan;
 
-  CosimLan(int port, const char* cable, const char* path, unsigned long epoch)
+  CosimLan(int port, const char* cable, const char* path, unsigned long epoch, uint16_t tls_port)
       : trace(std::fopen(path, "w")),
         chip(),
-        lan(chip, port, cable, require_trace(), {0, 0, epoch, 0}, std::chrono::steady_clock::now()) {}
+        lan(chip, port, cable, require_trace(), {tls_port, 0, epoch, 0}, std::chrono::steady_clock::now()) {}
 
   FILE* require_trace() const {
     if (!trace) throw std::runtime_error("Cannot open co-simulation Ethernet trace");
@@ -44,9 +44,9 @@ struct CosimLan {
 }  // namespace
 
 extern "C" {
-void* oq_cosim_lan_create(int port, const char* cable, const char* path, unsigned long epoch) {
+void* oq_cosim_lan_create(int port, const char* cable, const char* path, unsigned long epoch, uint16_t tls_port) {
   try {
-    return new CosimLan(port, cable, path, epoch);
+    return new CosimLan(port, cable, path, epoch, tls_port);
   } catch (const std::exception&) {
     return nullptr;
   }

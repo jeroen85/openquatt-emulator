@@ -1,4 +1,7 @@
 """Offline TLS success, serialization, interruption and recovery evidence."""
+from .scenario_load import read_web_asset
+
+import http.client
 import json
 import threading
 import time
@@ -20,6 +23,8 @@ class HttpsScenario:
         self.location_token, self.location_sent = secrets.token_hex(16), False
         self.sse_lock, self.sse = threading.RLock(), {"sse_events": 0}
         self.thread = None
+        self.asset_thread = None
+        self.assets = []
         self.result = {"version": 1, "stage": "configure", "checks": {}, "checkpoints": {}, "samples": [],
                        "profile": "production_trust_rejection" if reject else "local_https_test_ca",
                        "fixture": fixture.identity, "sse_events": 0,
@@ -61,6 +66,27 @@ class HttpsScenario:
                         self.sse["sse_error"] = str(exc)
         self.thread = threading.Thread(target=work, name="https-web-sse", daemon=True)
         self.thread.start()
+        self.asset_thread = threading.Thread(target=self.download_assets, name="https-web-assets", daemon=True)
+        self.asset_thread.start()
+
+    def download_assets(self):
+        next_ms = 0
+        while not self.stop.wait(.1) and time.monotonic() < self.deadline:
+            now = self.clock()
+            if now < next_ms:
+                continue
+            next_ms = now + 5000
+            row = {"begin_ms": now, "ok": False}
+            try:
+                with bounded_response(self.port, "/0.js", min(self.deadline, time.monotonic() + 4),
+                                      self.stop.is_set) as response:
+                    observation = read_web_asset(response)
+                row.update(observation)
+            except (OSError, EOFError, ValueError, http.client.HTTPException) as error:
+                row["error"] = str(error)
+            row["end_ms"] = self.clock()
+            with self.sse_lock:
+                self.assets.append(row)
 
     def check_manifest(self, get):
         requested_ms = self.clock()
@@ -178,7 +204,10 @@ class HttpsScenario:
         self.stop.set()
         if self.thread:
             self.thread.join(2)
-        return self.thread is None or not self.thread.is_alive()
+        if self.asset_thread:
+            self.asset_thread.join(2)
+        return ((self.thread is None or not self.thread.is_alive())
+                and (self.asset_thread is None or not self.asset_thread.is_alive()))
 
     def finalize(self):
         with self.sse_lock:
@@ -190,6 +219,11 @@ class HttpsScenario:
                   "sse_healthy": not self.result.get("sse_error"), "location_stored": self.result.get("location_stored") is True}
         times = self.result.get("sse_times_ms", [])
         load_start, load_end = points.get("weather"), points.get("after")
+        with self.sse_lock:
+            self.result["web_downloads"] = [dict(row) for row in self.assets]
+        checks["web_downloads_during_tls"] = (load_start is not None and load_end is not None
+            and sum(row["ok"] and load_start <= row["begin_ms"] <= row["end_ms"] <= load_end
+                    for row in self.result["web_downloads"]) >= 2)
         checks["stream_covers_tls"] = (load_start is not None and load_end is not None and bool(times)
                                       and times[0] <= load_start and times[-1] >= load_end
                                       and all(0 <= b-a <= 12000 for a,b in zip(times,times[1:])))

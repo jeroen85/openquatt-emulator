@@ -29,6 +29,8 @@ from . import model
 from .atomic import atomic_json
 from .build import ensure, verify_original
 from .cosim import CosimPeer
+from .cosim_opentherm import OpenTherm
+from .scenario_load import ScenarioLoad, regulation_windows
 from .cosim_build import ensure_cosim
 from .dynamics import Dynamics, wire_evidence
 from .factory import factory_info
@@ -167,11 +169,11 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("De lokale NTP-klok vereist een Q Duo-rooktest met co-simulatie op Ethernet en een geldige UTC-epoch")
     if backend not in ("native", "cosim"):
         raise ValueError("Ongeldige emulatorbackend")
-    if backend == "cosim" and (mode != "device" or (network != "wifi" and scenario != "compatibility")
-                               or scenario not in ("compatibility", "pr-memory", "restart")
+    if backend == "cosim" and (mode != "device" or (network != "wifi" and scenario not in ("compatibility", "https", "https-reject", "power-house", "heating-curve", "lowflow", "dynamics"))
+                               or scenario not in ("compatibility", "pr-memory", "restart", "https", "https-reject", "power-house", "heating-curve", "lowflow", "dynamics")
                                or memory_export is not None
                                or (scenario == "restart" and restart_case != "software")):
-        raise ValueError("Co-simulatie ondersteunt de Q Duo-rooktest, pr-memory en de softwareherstart")
+        raise ValueError("Co-simulatie ondersteunt de Q Duo-rooktest, pr-memory, softwareherstart, HTTPS en de GPIO-labscenario's voor regeling")
     if scenario in ("mqtt-reconnect", "energy-boundary") and (network != "ethernet" or mode != "device"):
         raise ValueError("Deze proef vereist de lokale Ethernet-fixture in device-modus")
     if scenario == "mqtt-reconnect":
@@ -256,12 +258,17 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         raise ValueError("Invalid test scenario")
     if scenario in DYNAMIC_SCENARIOS and (mode != "device" or network == "failover"):
         raise ValueError("Dynamic scenarios require device mode on a stable Wi-Fi or Ethernet route")
-    if measure_memory and (mode != "device" or network == "failover" or scenario not in ("compatibility", "lowflow", "pr-memory", "https", "https-reject", "mqtt-reconnect")):
+    if measure_memory and (mode != "device" or network == "failover" or scenario not in ("compatibility", "lowflow", "pr-memory", "https", "https-reject", "mqtt-reconnect", "power-house", "heating-curve")):
         raise ValueError("Memory recording is unsupported for this scenario or network route")
     if not 1024 <= base <= 65533:
         raise ValueError("Port base must be between 1024 and 65533")
 
+    if backend == "cosim" and scenario in ("power-house", "heating-curve", "lowflow", "https"):
+        measure_memory = True
     info = factory_info(firmware)
+    gpio_ot = backend == "cosim" and scenario in ("power-house", "heating-curve", "lowflow", "dynamics")
+    if gpio_ot and info["project"] != "openquatt-ot-lab":
+        raise ValueError("Ubuntu OpenTherm-scenario's vereisen de Q Duo GPIO-labbin")
     ports = {"http": base, "uart1": base + 2}
     if backend == "cosim":
         ports["cosim"] = base + 3
@@ -445,6 +452,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     pr_load = (PrWebLoad(ports["http"], guest_clock, started, deadline,
                          lambda: _cancel_requested or stop.is_set(), without_overlap, export)
                if scenario == "pr-memory" else None)
+    scenario_load = (ScenarioLoad(probe.port, guest_clock, deadline)
+                     if use_cosim and measure_memory and scenario in ("power-house", "heating-curve", "lowflow") else None)
     background = []
     pr_end_ms = PR_WINDOWS["after"][1] + SAMPLE_SLACK_MS
     openers = {
@@ -576,6 +585,10 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             windows = (https or mqtt).windows()
             if windows is None or (mqtt and guest_ms < windows["reconnected"][1] + SAMPLE_SLACK_MS):
                 return
+        elif scenario in ("power-house", "heating-curve"):
+            windows = regulation_windows(scenario, dynamics.result)
+            if windows is None:
+                return
         elif scenario == "lowflow":
             if dynamics.result["stage"] != "complete":
                 return
@@ -666,6 +679,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             if pr_load and report["web_checks"] >= 2 and pr_load.ready_ms is None:
                 if not export or export.prepare(get):
                     pr_load.ready(guest_clock())
+            if scenario_load:
+                scenario_load.start()
             if measure_memory:
                 inspect_memory(port)
 
@@ -678,8 +693,10 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             https = HttpsScenario(tls, guest_clock, ports["ethernet"], deadline, scenario == "https-reject")
             report["https"] = https.result
         if use_cosim:
-            ethernet = (ports["ethernet"], cable, trace, ntp_epoch or 0) if network != "wifi" else None
-            cosim = CosimPeer(odu_library, temperature, ethernet=ethernet)
+            ethernet = (ports["ethernet"], cable, trace, tls.epoch if tls else ntp_epoch or 0) if network != "wifi" else None
+            ot = OpenTherm(thermostat) if dynamics and not restart_case else None
+            cosim = CosimPeer(odu_library, temperature, ethernet=ethernet, opentherm=ot,
+                              tls_port=tls.port if tls else 0)
         process = subprocess.Popen(
             command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, errors="replace",
@@ -770,6 +787,14 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 "reset_path": "new_emulator_process_from_factory_copy",
                 "hardware_profile": f"esp32s3-8M-psram-q-duo-{backend}",
             }
+        if scenario_load:
+            scenario_load.close()
+            if scenario == "lowflow":
+                windows = (lowflow_windows(dynamics.result)
+                           if dynamics.result["stage"] == "complete" else None)
+            else:
+                windows = regulation_windows(scenario, dynamics.result)
+            report["scenario_load"] = scenario_load.finalize(windows)
         peer.stop.set()
         if cosim:
             cosim.stopping.set()
@@ -863,6 +888,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         except (ValueError, OSError, KeyError) as exc:
             error("native trace", exc)
 
+        if cosim and cosim.opentherm is not None:
+            ot_events.extend(cosim.opentherm.delivered(report.get("guest_uptime_ms", 0)))
+            (out / "opentherm.json").write_text(json.dumps(cosim.opentherm.events) + "\n")
         if dynamics:
             dynamics.result["wire"] = wire_evidence(ot_events)
             if hasattr(dynamics, "finalize"):
@@ -933,7 +961,7 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float)
     parser.add_argument("--network", choices=MODES)
     parser.add_argument("--scenario", choices=SCENARIOS)
-    parser.add_argument("--memory", action="store_true", help="Read stock internal heap samples during compatibility or lowflow")
+    parser.add_argument("--memory", action="store_true", help="Meet interne heap via de systeemrecorder in ondersteunde scenario's")
     parser.add_argument("--memory-baseline", type=Path, help="Compare the heap run with a qualified report.json")
     parser.add_argument("--memory-max-drop-bytes", type=int, help="Maximum heap drop in bytes. A PR-memory excess requests a repeat run.")
     parser.add_argument("--memory-baseline-firmware-sha256", help="Expected dev factory-bin SHA-256 for pr-memory")

@@ -1,4 +1,4 @@
-"""Co-simulation peer for the Q Duo MAX31865 and W5500."""
+"""Co-simulation peer for Q Duo peripherals and optional GPIO OpenTherm."""
 from __future__ import annotations
 
 import ctypes
@@ -83,7 +83,7 @@ def read_frame(stream):
     return fields(frame[2 + topic_size:])
 
 
-def registration(ethernet=False):
+def registration(ethernet=False, opentherm=False):
     pins = b"".join(uint(index, pin) for index, pin in enumerate((CS, CLK, MOSI, MISO), 1))
     spi = message(3, pins)
     watch = 1 << CS
@@ -93,6 +93,9 @@ def registration(ethernet=False):
         eth_pins = (W5500_CS, W5500_CLK, W5500_MOSI, W5500_MISO)
         claims.append(message(3, b"".join(uint(index, pin) for index, pin in enumerate(eth_pins, 1))))
         drive |= 1 << W5500_IRQ
+    if opentherm:
+        drive |= (1 << 21) | (1 << 47)
+        watch |= (1 << 14) | (1 << 48)
     claims.append(message(1, uint(1, drive) + uint(2, watch)))
     return message(4, uint(1, 1) + message(2, b"OpenQuatt Q Duo") + b"".join(message(3, claim) for claim in claims))
 
@@ -102,7 +105,8 @@ def spi_reply(correlation_id, data):
 
 
 class CosimPeer:
-    def __init__(self, library, temperature, ethernet=None):
+    def __init__(self, library, temperature, ethernet=None, opentherm=None, tls_port=0):
+        self.opentherm = opentherm
         self.lib = ctypes.CDLL(str(library))
         self.lib.oq_cosim_rtd_create.argtypes = [ctypes.c_double]
         self.lib.oq_cosim_rtd_create.restype = ctypes.c_void_p
@@ -118,7 +122,7 @@ class CosimPeer:
         self.lan = None
         if ethernet is not None:
             try:
-                self.lan = Ethernet(self.lib, *ethernet, self.drive)
+                self.lan = Ethernet(self.lib, *ethernet, self.drive, tls_port=tls_port)
             except BaseException:
                 self.lib.oq_cosim_rtd_destroy(self.rtd)
                 raise
@@ -146,7 +150,8 @@ class CosimPeer:
 
     def serve(self):
         try:
-            self.send(registration(self.lan is not None))
+            self.send(registration(self.lan is not None, True) if self.opentherm is not None
+                      else registration(self.lan is not None))
             with self.socket.makefile("rb") as stream:
                 while not self.stopping.is_set():
                     packet = read_frame(stream)
@@ -175,10 +180,14 @@ class CosimPeer:
             self.registered = True
         elif 2 in packet:
             self.clock_frames += 1
+            if self.opentherm is not None:
+                self.opentherm.tick(self, at)
             if self.lan and self.registered:
                 self.lan.service(at)
         elif 3 in packet:
             gpio = fields(packet[3])
+            if self.opentherm is not None:
+                self.opentherm.edge(self, gpio.get(1), at, gpio.get(2, 0))
             if gpio.get(1) == CS:
                 self.lib.oq_cosim_rtd_select(self.rtd, not gpio.get(2))
         elif 7 in packet:

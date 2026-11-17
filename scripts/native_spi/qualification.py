@@ -137,6 +137,10 @@ def qualify(report):
     if "export_memory" in report:
         for key, ok in report["export_memory"]["checks"].items():
             gates["export_" + key] = (ok is True, f"Exportcontrole faalt: {key}.")
+    if "scenario_load" in report:
+        checks = report["scenario_load"].get("checks", {})
+        gates["scenario_web_load"] = (bool(checks) and all(checks.values()),
+                                     "De SSE-/webbelasting dekte niet alle geheugenvensters.")
     if "pr_memory" in report:
         pr = report["pr_memory"]
         workload = pr["workload"]

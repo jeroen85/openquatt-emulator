@@ -81,7 +81,7 @@ python3 -m scripts.native_spi.pr_suite --backend cosim --profile uitgebreid \
   --firmware /pad/naar/firmware.factory.bin --port-base 19600 --output ./oq-hil-resultaten
 ```
 
-Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `regeling`, `energie` en `alles` de lokale macOS-backend. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
+Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `regeling`, `energie` en `alles` de lokale macOS-backend. De afzonderlijke Ubuntu-scenario’s voor [HTTPS, Power House, lowflowherstel en stooklijn](ubuntu-scenarios.md) beschrijven hun benodigde labbuilds en geheugenmetingen. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
 
 #### OpenTherm-uitval en herstel op Ubuntu
 
