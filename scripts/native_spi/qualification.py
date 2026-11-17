@@ -61,6 +61,11 @@ def qualify(report):
             and wire.get("rx", 0) > 0 and wire.get("tx", 0) > 0,
             "De Ethernetproef heeft onvoldoende bewijs voor DHCP, frames en webtoegang.",
         )
+    if ntp := report.get("ntp_fixture"):
+        gates["local_ntp"] = (
+            report.get("local_services", {}).get("ntp", 0) > 0 and "guest_epoch_ms" in ntp,
+            "De firmwareklok is niet aantoonbaar gesynchroniseerd met de lokale NTP-fixture.",
+        )
     if network.get("mode") == "failover":
         cut = network.get("cable_cut_s")
         restored = network.get("wifi_restored_s")

@@ -33,9 +33,12 @@ def runtime_fingerprint(report):
     if report.get("pr_memory", {}).get("plan", {}).get("export"):
         sources.append("export_memory.py")
     cosim = report.get("backend") == "cosim"
+    ethernet_cosim = cosim and settings(report)["network"] == "ethernet"
     binaries = ["executable_sha256", "odu_library_sha256"]
     if cosim:
         sources.append("cosim.py")
+        if ethernet_cosim:
+            sources.append("cosim_ethernet.py")
     else:
         binaries.append("extension_sha256")
     fingerprint = {key: report[key] for key in binaries}
@@ -43,6 +46,8 @@ def runtime_fingerprint(report):
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in fingerprint.values()):
         raise ValueError("Ongeldige emulatorvingerafdruk in het geheugenrapport")
     if cosim:
+        if ethernet_cosim:
+            fingerprint["slirp"] = report["native_build"]["slirp"]
         return {**fingerprint, "backend": "cosim", "chip": report["input"]["chip"]}
     return {**fingerprint, "slirp": report["native_build"]["slirp"], "chip": report["input"]["chip"]}
 

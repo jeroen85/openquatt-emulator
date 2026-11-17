@@ -54,13 +54,13 @@ Wie het archief via de browser downloadt, kan het lokaal uitpakken en het bestan
 
 ### Linux en Windows met WSL2
 
-De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.0.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`.
+De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.0.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`. De rooktest ondersteunt ook W5500-Ethernet en terugval naar Wi-Fi via dezelfde backend.
 
 Gebruik op Ubuntu 24.04:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y g++ lsof python3 git ca-certificates
+sudo apt-get install -y g++ lsof python3 git ca-certificates pkg-config libslirp-dev
 git clone https://github.com/jeroen85/openquatt-emulator.git
 cd openquatt-emulator
 python3 -m scripts.native_spi.cosim_build
@@ -72,7 +72,9 @@ De installer controleert de SHA-256 van het officiële Espressif-archief en het 
 
 Voor Windows gebruik je Ubuntu onder WSL2. Installeer Ubuntu bijvoorbeeld met `wsl --install -d Ubuntu-24.04` in PowerShell, open daarna de Ubuntu-terminal en voer daar de Linux-opdrachten uit. Bewaar de checkout in je Linux-thuismap. Een bestaand firmwarebestand op de Windows-schijf kun je meegeven via `/mnt/c/...`. Deze route wacht nog op een afzonderlijke WSL2-proef. [WSL installeren](https://learn.microsoft.com/windows/wsl/install)
 
-Voor Ethernet, OpenTherm, de desktopwerkbank en de overige scenario’s gebruik je de macOS-route uit de voorgaande sectie. Zie ook de [GitHub-profielen](scenarios.md#firmwareproeven-op-github).
+Kies voor de W5500-rooktest `--network ethernet`. Voor het doormeten van automatische terugval kies je `--network failover --seconds 180`. Met `--network ethernet --ntp-epoch 1768474320` controleert de rooktest tevens of de firmware de lokale klok overneemt. De tijd loopt vanaf die UTC-epoch. Het rapport bevat het aantal NTP-antwoorden en de uitgelezen firmwaretijd. Alle testservers luisteren op loopback. De lokale fixture beantwoordt DNS en NTP zelf.
+
+Voor OpenTherm, de desktopwerkbank en de profielen Modbus-uitval, regeling en energiehistorie gebruik je de macOS-route uit de voorgaande sectie. Zie ook de [GitHub-profielen](scenarios.md#firmwareproeven-op-github).
 
 ## 2. De juiste firmware kiezen
 

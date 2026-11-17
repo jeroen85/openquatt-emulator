@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -33,7 +34,7 @@ ASSETS = {
     ),
 }
 MODEL_SOURCES = tuple(name for name in SOURCES if name.startswith(("native/", "vendor/odu/"))) + (
-    "device_model.h", "w5500.h", "native/cosim_devices.cpp",
+    "device_model.h", "w5500.h", "ethernet_lan.h", "local_services.h", "native/cosim_devices.cpp",
 )
 
 
@@ -83,7 +84,13 @@ def ensure_cosim():
         flags += ["-isysroot", sdk, "-isystem", str(Path(sdk) / "usr/include/c++/v1")]
     base = ROOT / "scripts/native_spi"
     sources = {name: (base / name).read_bytes() for name in MODEL_SOURCES}
-    identity = {"backend": "cosim", "platform": platform_tag, "version": VERSION, "original_sha256": executable_sha,
+    try:
+        slirp_version = subprocess.check_output(["pkg-config", "--modversion", "slirp"], text=True).strip()
+        slirp_flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs", "slirp"], text=True))
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        packages = "pkgconf libslirp" if mac else "pkg-config libslirp-dev"
+        raise ValueError(f"Installeer {packages} voor de co-simulatiebackend") from exc
+    identity = {"slirp": slirp_version, "slirp_flags": slirp_flags, "backend": "cosim", "platform": platform_tag, "version": VERSION, "original_sha256": executable_sha,
                 "compiler": subprocess.check_output([compiler, "--version"], text=True), "compiler_flags": flags,
                 "source_sha256": {name: hashlib.sha256(source).hexdigest() for name, source in sources.items()}}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
@@ -102,7 +109,7 @@ def ensure_cosim():
                     output.parent.mkdir(parents=True, exist_ok=True)
                     output.write_bytes(source)
                 subprocess.run([compiler, *flags, "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
-                                "native/odu_bridge.cpp", "native/cosim_devices.cpp", "-o", filename],
+                                "native/odu_bridge.cpp", "native/cosim_devices.cpp", *slirp_flags, "-o", filename],
                                cwd=staged, check=True, timeout=90)
                 result = {**identity, "artifact_sha256": {filename: digest(staged / filename)}}
                 (staged / "build.json").write_text(json.dumps(result))

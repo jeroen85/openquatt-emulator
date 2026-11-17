@@ -184,7 +184,7 @@ jobs:
       - name: Install the pinned Linux runtime
         if: runner.os == 'Linux'
         run: |
-          command -v lsof >/dev/null || sudo apt-get install -y lsof
+          sudo apt-get install -y lsof pkg-config libslirp-dev
           python -B -m scripts.native_spi.cosim_build
       - name: Install the pinned macOS runtime
         if: runner.os == 'macOS'

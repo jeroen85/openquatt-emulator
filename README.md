@@ -4,7 +4,7 @@ Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virt
 
 ## Installatie en gebruik
 
-De CLI-rooktest draait via co-simulatie op Linux en Apple Silicon. Voor Windows is er een route via WSL2. De uitgebreide scenario’s en desktopwerkbank gebruiken de macOS-backend. [Linux en WSL2](docs/handleiding.md#linux-en-windows-met-wsl2)
+De CLI-rooktest met Wi-Fi, Ethernet of automatische terugval draait via co-simulatie op Linux en Apple Silicon. Voor Windows is er een route via WSL2. De uitgebreide scenario’s en desktopwerkbank gebruiken de macOS-backend. [Linux en WSL2](docs/handleiding.md#linux-en-windows-met-wsl2)
 
 De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. De CLI biedt ook een dynamische proef met OTT, OTB, compressor, flow en defrost. Je vindt er uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
 
