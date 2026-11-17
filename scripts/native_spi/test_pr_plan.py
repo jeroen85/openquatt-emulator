@@ -9,9 +9,9 @@ class WorkflowPlanTest(unittest.TestCase):
         plan = workflow_plan("modbus, herstart, energie, herstart", "arm64", "a" * 40, "b" * 40)
         jobs = json.loads(plan["matrix"])["include"]
         self.assertEqual(jobs, [
-            {"profile": "herstart", "runner": "ubuntu-24.04-arm", "compare": True},
-            {"profile": "modbus", "runner": "macos-15", "compare": False},
-            {"profile": "energie", "runner": "macos-15", "compare": False},
+            {"label": "softwareherstart", "profile": "herstart", "runner": "ubuntu-24.04-arm", "compare": True},
+            {"label": "Modbus-uitval", "profile": "modbus", "runner": "macos-15", "compare": False},
+            {"label": "energiehistorie", "profile": "energie", "runner": "macos-15", "compare": False},
         ])
         reordered = workflow_plan("energie,modbus,herstart", "arm64", "a" * 40, "b" * 40)
         self.assertEqual(plan["artifact_key"], reordered["artifact_key"])
@@ -20,13 +20,15 @@ class WorkflowPlanTest(unittest.TestCase):
         plan = workflow_plan("alles", "x64", "a" * 40, "a" * 40)
         self.assertEqual(plan["baseline"], plan["candidate"])
         self.assertEqual(json.loads(plan["matrix"])["include"], [
-            {"profile": "alles", "runner": "macos-15", "compare": True},
+            {"label": "alle proeven", "profile": "alles", "runner": "macos-15", "compare": True},
         ])
 
     def test_absent_baseline_does_not_schedule_a_comparison(self):
         plan = workflow_plan("basis", "x64", "a" * 40)
         self.assertEqual(plan["baseline"], "")
-        self.assertFalse(json.loads(plan["matrix"])["include"][0]["compare"])
+        job, = json.loads(plan["matrix"])["include"]
+        self.assertEqual(job["label"], "rooktest en geheugen")
+        self.assertFalse(job["compare"])
 
     def test_invalid_selections_never_generate_jobs(self):
         for selection in ("", "basis,", "alles,energie", "unknown"):

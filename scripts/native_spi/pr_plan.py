@@ -9,6 +9,14 @@ import re
 from .pr_suite import PROFILES, select_cases
 
 LINUX_RUNNERS = {"x64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+PROFILE_LABELS = {
+    "basis": "rooktest en geheugen",
+    "herstart": "softwareherstart",
+    "modbus": "Modbus-uitval",
+    "energie": "energiehistorie",
+    "regeling": "regeling en flowbeveiliging",
+    "alles": "alle proeven",
+}
 
 
 def workflow_plan(selection, architecture, candidate, baseline=None):
@@ -37,8 +45,9 @@ def workflow_plan(selection, architecture, candidate, baseline=None):
         reference_job["compare"] = True
 
     key = hashlib.sha256(json.dumps([jobs, architecture, candidate, baseline], sort_keys=True).encode()).hexdigest()[:16]
+    matrix = {"include": [{**job, "label": PROFILE_LABELS[job["profile"]]} for job in jobs]}
     return {
-        "matrix": json.dumps({"include": jobs}, separators=(",", ":")),
+        "matrix": json.dumps(matrix, separators=(",", ":")),
         "candidate": candidate,
         "baseline": baseline or "",
         "artifact_key": key,
