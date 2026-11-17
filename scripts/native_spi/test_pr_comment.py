@@ -37,6 +37,7 @@ class FakeGitHub:
     def __init__(self):
         self.pr = PR
         self.runs = []
+        self.queries = []
         self.comment_rows = []
         self.artifacts = []
         self.writes = []
@@ -49,8 +50,9 @@ class FakeGitHub:
         if path == "/pulls/7":
             return self.pr
         if path.startswith("/actions/workflows/5/runs?event=pull_request&status=completed&head_sha="):
+            self.queries.append(path)
             return {"workflow_runs": self.runs}
-        if path == "/actions/runs/42/artifacts?per_page=100":
+        if path.startswith("/actions/runs/") and path.endswith("/artifacts?per_page=100"):
             return {"artifacts": self.artifacts}
         raise AssertionError(path)
 
@@ -124,6 +126,17 @@ class PrCommentTest(unittest.TestCase):
         self.assertTrue(publish(event(), REPO, SERVER, api))
         self.assertIn("run=3 attempt=3", api.writes[0][2])
         self.assertIn("**Geslaagd**", api.writes[0][2])
+
+    def test_late_event_for_previous_head_reports_the_current_head(self):
+        api = FakeGitHub()
+        current_sha = "d" * 40
+        api.pr = {**PR, "head": {**PR["head"], "sha": current_sha}}
+        run = event()["workflow_run"]
+        api.runs = [{**run, "head_sha": current_sha, "run_number": 4, "id": 43, "conclusion": "success"}]
+        self.assertTrue(publish(event(), REPO, SERVER, api))
+        self.assertIn(f"head_sha={current_sha}", api.queries[0])
+        self.assertIn("**Geslaagd**", api.writes[0][2])
+        self.assertIn("/actions/runs/43", api.writes[0][2])
 
     def test_never_uses_a_pr_number_from_an_artifact_or_other_workflow(self):
         api = FakeGitHub()

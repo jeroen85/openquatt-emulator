@@ -71,26 +71,32 @@ class GitHub:
             page += 1
 
 
-def matches(pr, run, repository_id):
+def same_pr_identity(pr, run, repository_id):
     head = pr.get("head", {})
     base = pr.get("base", {})
-    recorded = next((candidate for candidate in run.get("pull_requests") or []
-                     if candidate["number"] == pr["number"]), None)
     return (
         pr.get("state") == "open" and (base.get("repo") or {}).get("id") == repository_id
         and (head.get("repo") or {}).get("id") == (run.get("head_repository") or {}).get("id")
-        and head.get("ref") == run.get("head_branch") and head.get("sha") == run.get("head_sha")
-        and recorded is not None
-        and all(base.get(key) == recorded.get("base", {}).get(key) for key in ("ref", "sha"))
+        and head.get("ref") == run.get("head_branch")
+    )
+
+
+def matches(pr, run, repository_id):
+    recorded = next((candidate for candidate in run.get("pull_requests") or []
+                     if candidate["number"] == pr["number"]), None)
+    return (
+        same_pr_identity(pr, run, repository_id)
+        and pr["head"]["sha"] == run.get("head_sha") and recorded is not None
+        and all(pr["base"].get(key) == recorded.get("base", {}).get(key) for key in ("ref", "sha"))
     )
 
 
 def find_pr(api, run, repository_id):
-    if not run.get("head_repository") or not run.get("head_branch") or not SHA.fullmatch(run.get("head_sha") or ""):
+    if not run.get("head_repository") or not run.get("head_branch"):
         return None
     associated = run.get("pull_requests") or []
     candidates = [api.json(f"/pulls/{pr['number']}") for pr in associated]
-    current = [pr for pr in candidates if matches(pr, run, repository_id)]
+    current = [pr for pr in candidates if same_pr_identity(pr, run, repository_id)]
     return current[0] if len(current) == 1 else None
 
 
@@ -99,12 +105,16 @@ def version(run):
 
 
 def latest_for_pr(api, run, pr, repository_id):
-    query = urlencode({"event": "pull_request", "status": "completed", "head_sha": run["head_sha"], "per_page": 100})
+    head_sha = pr["head"]["sha"]
+    if not SHA.fullmatch(head_sha):
+        return None
+    query = urlencode({"event": "pull_request", "status": "completed", "head_sha": head_sha, "per_page": 100})
     path = f"/actions/workflows/{run['workflow_id']}/runs?{query}"
     candidates = api.json(path)["workflow_runs"]
     return max((candidate for candidate in [run, *candidates]
                 if candidate.get("path") == WORKFLOW and candidate.get("event") == "pull_request"
-                and candidate.get("status") == "completed" and matches(pr, candidate, repository_id)), key=version)
+                and candidate.get("status") == "completed" and matches(pr, candidate, repository_id)),
+               key=version, default=None)
 
 
 def parse_result(payload, expected_profile):
@@ -183,6 +193,9 @@ def publish(event, repository, server, api):
 
     number = pr["number"]
     run = latest_for_pr(api, run, pr, owner["id"])
+    if run is None:
+        print("Geen voltooide run voor de huidige PR-commit")
+        return False
     existing = None
     revision = version(run)
     for comment in api.comments(number):
