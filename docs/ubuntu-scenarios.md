@@ -11,27 +11,42 @@ hieronder uit vanuit de emulatorcheckout.
 
 ## Firmware klaarzetten
 
-Voor Power House, lowflow en stooklijn gebruik je de aparte Q Duo-GPIO-labbin.
-De GPIO-laboverlay staat voorlopig in een aparte lokale OpenQuatt-labcheckout,
-niet in de reguliere dev. Volg `scripts/hil/tools/README.md` in die checkout.
-Bouw voor een andere kandidaat dezelfde overlay op de gevraagde bronrevisie;
-hergebruik geen labbin van een andere firmwarewijziging.
-De config is `scripts/hil/configs/gpio_opentherm_duo.yaml`. De labfirmware
-gebruikt GPIO-interrupts voor OpenTherm-ontvangst, de bestaande decoders en
-RMT voor zenden. De gewone firmware gebruikt RMT ook voor ontvangst.
-De runner weigert voor deze Ubuntu-regelproeven een gewone factory-bin.
+Voor Power House, lowflow, stooklijn en HTTPS gebruik je één gedeelde
+Q Duo-labbin. De receptuur staat in deze emulatorrepo en werkt op een eigen,
+verse OpenQuatt-checkout van de gewenste bronrevisie. Bouw de gewone
+Q Duo-bin eerst als je ook de basisproeven wilt draaien.
+
+Activeer de ESPHome-omgeving die bij die broncheckout hoort. Voer daarna
+vanuit de emulatorrepo uit:
 
 ```sh
-oq_source=/pad/naar/openquatt-labcheckout
-oq_gpio_bin="$oq_source/.esphome/build/heatpump_controller_q_duo_gpio_ot/build/firmware.factory.bin"
+oq_source=/pad/naar/verse-openquatt-checkout
+oq_tls="$PWD/.tmp/native-spi/shared-lab-tls"
+python3 -m scripts.native_spi.firmware_lab --firmware-root "$oq_source" --fixture "$oq_tls"
+ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT=2 esphome compile \
+  "$oq_source/configs/heatpump_controller_q/.virtual-https.yaml"
+oq_lab_bin="$oq_source/.esphome/build/virtual_https/build/firmware.factory.bin"
+python3 -m scripts.native_spi.https_fixture --firmware-root "$oq_source" \
+  --output "$oq_tls" --bind-firmware "$oq_lab_bin"
+oq_gpio_bin="$oq_lab_bin"
+oq_https_bin="$oq_lab_bin"
 ```
 
-HTTPS gebruikt de afzonderlijke [test-CA-build](scenarios.md#https-volledig-lokaal).
-Die heeft de normale Q Duo-config als basis. De CA, certificaten en
-privésleutels blijven lokaal. Het fixturemanifest bindt de HTTPS-bin aan
-de CA en bronrevisie. Voor de regelproeven kun je dezelfde GPIO-bin
-hergebruiken. Wanneer je ook HTTPS test, is daarvoor een extra build nodig.
-Gebruik beide labimages uitsluitend in de emulator.
+De voorbereiding controleert de meegeleverde GPIO-bronnen en past de
+ontvangstpatch toe. De labfirmware gebruikt GPIO-interrupts voor
+OpenTherm-ontvangst, de bestaande decoders en RMT voor zenden. De gewone
+firmware gebruikt RMT ook voor ontvangst. De runner weigert voor de
+Ubuntu-regelproeven een gewone factory-bin.
+
+Dezelfde labbin vertrouwt de lokale test-CA voor HTTPS. Certificaatverificatie
+blijft actief. Het fixturemanifest bindt de HTTPS-bin aan de CA,
+bronrevisie en GPIO-receptuur. De privésleutels blijven in de fixturemap;
+gebruik de labimage uitsluitend in de emulator. Hergebruik geen labbin
+van een andere firmwarewijziging.
+
+De oudere losse GPIO-config uit de lokale OpenQuatt-labcheckout blijft
+bruikbaar voor de afzonderlijke regelproeven. De GitHub-workflow gebruikt
+de hierboven beschreven gedeelde receptuur.
 
 ## Power House
 
@@ -96,12 +111,11 @@ bepaald bij opstarten, defrost, Duo en het stabiele Single-herstel.
 
 ## HTTPS onder webbelasting
 
-Bereid eerst de lokale CA en HTTPS-bin voor en bind ze volgens de
-[HTTPS-instructies](scenarios.md#https-volledig-lokaal).
+Gebruik de hierboven gebouwde en gebonden gedeelde labbin. De oudere
+[afzonderlijke HTTPS-receptuur](scenarios.md#https-volledig-lokaal) blijft ook
+beschikbaar voor een lokale proef zonder OpenTherm.
 
 ```sh
-oq_tls="$PWD/.tmp/native-spi/local-https"
-oq_https_bin="$oq_source/.esphome/build/virtual_https/build/firmware.factory.bin"
 python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_https_bin" \
   --scenario https --network ethernet --https-fixture "$oq_tls" \
   --seconds 420 --port-base 23500 --name ubuntu-https
@@ -139,8 +153,10 @@ onder `qualification`.
 - `scenario_load` bevat de SSE-/webbelasting van de regelproeven en de
   overlapcontroles per meetvenster.
 
-Deze proeven zijn lokaal via `run.py` beschikbaar. Het profiel `uitgebreid`
-en de GitHub-workflow blijven de vier bestaande draagbare proeven gebruiken.
+Deze proeven zijn via `run.py` en de Ubuntu-profielen `https`, `regeling`
+en `stooklijn` beschikbaar. Het profiel `uitgebreid` en de GitHub-workflow
+voegen ze toe aan de vier bestaande basisproeven. Zie de
+[profielkeuze en gedeelde builds](scenarios.md#firmwareproeven-op-github).
 
 Een onvoltooide fase of ontbrekende recorderdekking geeft afkeur. De
 10 s-sampling kan korte dips missen. Heapmin is het minimum sinds boot.
