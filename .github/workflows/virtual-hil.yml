@@ -56,6 +56,7 @@ concurrency:
 
 jobs:
   plan:
+    name: Proeven en firmwareversies kiezen
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -96,6 +97,7 @@ jobs:
           python3 -B -m scripts.native_spi.pr_plan
 
   emulator-checks:
+    name: Emulator controleren
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
@@ -127,6 +129,7 @@ jobs:
           "$RUNNER_TEMP/test_scenarios"
 
   q-duo-firmware:
+    name: Q Duo-firmware bouwen
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -141,6 +144,7 @@ jobs:
           artifact_suffix: ${{ needs.plan.outputs.artifact_key }}
 
   q-duo-baseline:
+    name: Referentiefirmware bouwen
     if: ${{ needs.plan.outputs.baseline != '' && needs.plan.outputs.baseline != needs.plan.outputs.candidate }}
     needs: [plan, q-duo-firmware]
     runs-on: ubuntu-24.04
@@ -156,6 +160,7 @@ jobs:
           artifact_suffix: ${{ needs.plan.outputs.artifact_key }}
 
   q-duo-hil:
+    name: Q Duo · ${{ matrix.label }}
     needs: [plan, emulator-checks, q-duo-firmware, q-duo-baseline]
     if: >-
       ${{ !cancelled() && needs.plan.result == 'success' && needs.emulator-checks.result == 'success' && needs.q-duo-firmware.result == 'success' &&

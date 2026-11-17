@@ -9,6 +9,12 @@ import re
 from .pr_suite import COSIM_PROFILES
 
 LINUX_RUNNERS = {"x64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+PROFILE_LABELS = {
+    "basis": "rooktest en geheugen",
+    "herstart": "softwareherstart",
+    "netwerk": "Ethernet en Wi-Fi-terugval",
+    "uitgebreid": "alle Ubuntu-proeven",
+}
 
 
 def workflow_plan(selection, architecture, candidate, baseline=None):
@@ -32,8 +38,9 @@ def workflow_plan(selection, architecture, candidate, baseline=None):
         jobs[0]["compare"] = True
 
     key = hashlib.sha256(json.dumps([jobs, architecture, candidate, baseline], sort_keys=True).encode()).hexdigest()[:16]
+    matrix = {"include": [{**job, "label": PROFILE_LABELS[job["profile"]]} for job in jobs]}
     return {
-        "matrix": json.dumps({"include": jobs}, separators=(",", ":")),
+        "matrix": json.dumps(matrix, separators=(",", ":")),
         "candidate": candidate,
         "baseline": baseline or "",
         "artifact_key": key,
