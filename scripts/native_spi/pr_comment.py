@@ -12,7 +12,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 import zipfile
 import zlib
 
-from .pr_suite import CASES, PROFILES
+from .pr_profiles import CASES, LAB_CASES, PROFILES, selected_cases, selected_profiles
 
 WORKFLOW = ".github/workflows/virtual-hil.yml"
 SKIPPED_TITLE = "Virtuele HIL · Geen proef aangevraagd"
@@ -132,19 +132,51 @@ def parse_result(payload, expected_profile):
         result = json.loads(archive.read("pr-result.json"))
         source = json.loads(archive.read("source-candidate.json"))
 
-    if not isinstance(result, dict) or result.get("profile") != expected_profile or expected_profile not in PROFILES:
-        raise ValueError("Onbekend profiel in het resultaat")
+    if not isinstance(result, dict):
+        raise ValueError("Ongeldig resultaat")
+    schema = result.get("schema", 1)
+    if type(schema) is not int:
+        raise ValueError("Ongeldig uitslagschema")
+    if schema == 1:
+        if result.get("profile") != expected_profile or expected_profile not in PROFILES:
+            raise ValueError("Onbekend profiel in het resultaat")
+        profiles = (expected_profile,)
+        allowed = set(PROFILES[expected_profile]) | {"geheugen-baseline"}
+    elif schema == 2:
+        profiles = result.get("profiles")
+        if (expected_profile != "suite" or not isinstance(profiles, list) or not profiles
+                or len(profiles) > 7 or any(not isinstance(p, str) for p in profiles)
+                or tuple(profiles) != selected_profiles(",".join(profiles))):
+            raise ValueError("Ongeldige geselecteerde profielen")
+        allowed = set(selected_cases(",".join(profiles), "cosim")) | {"geheugen-baseline"}
+    else:
+        raise ValueError("Onbekend uitslagschema")
     cases = result.get("cases")
-    allowed = set(PROFILES[expected_profile]) | {"geheugen-baseline"}
     if (not isinstance(cases, dict) or not cases or not cases.keys() <= allowed
             or any(type(status) is not bool for status in cases.values())):
         raise ValueError("Ongeldige proefuitslagen")
+    if schema == 2 and not (allowed - {"geheugen-baseline"}) <= cases.keys():
+        raise ValueError("Geselecteerde proeven ontbreken")
     revision = source.get("revision") if isinstance(source, dict) else None
     if (not isinstance(revision, str) or not SHA.fullmatch(revision)
             or source.get("repository") != "OpenQuatt/OpenQuatt"
             or source.get("target") != "configs/heatpump_controller_q/duo.yaml"):
         raise ValueError("Ongeldige firmwareherkomst")
-    return revision, cases
+    firmware = result.get("firmware", {}) if schema == 2 else {}
+    if not isinstance(firmware, dict) or not firmware.keys() <= cases.keys():
+        raise ValueError("Ongeldige firmware-identiteiten")
+    for key, identity in firmware.items():
+        role = "lab" if key in LAB_CASES else "baseline" if key == "geheugen-baseline" else "candidate"
+        if (not isinstance(identity, dict) or identity.get("role") != role
+                or not isinstance(identity.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", identity["sha256"])):
+            raise ValueError("Ongeldige firmwarehash of -rol")
+    if schema == 2 and any(passed and key not in firmware for key, passed in cases.items()):
+        raise ValueError("Een geslaagde proef mist haar firmwarehash")
+    for role in ("candidate", "lab"):
+        if len({item["sha256"] for item in firmware.values() if item["role"] == role}) > 1:
+            raise ValueError("De proeven hebben geen gedeelde firmware per rol")
+    return {"revision": revision, "profiles": profiles, "cases": cases, "firmware": firmware}
 
 
 def details(api, run):
@@ -152,7 +184,7 @@ def details(api, run):
     profiles = {}
     for artifact in artifacts:
         name = ARTIFACT.fullmatch(artifact["name"])
-        if not name or artifact.get("expired") or name[1] not in PROFILES or int(name[2]) != run["run_attempt"]:
+        if not name or artifact.get("expired") or name[1] not in {*PROFILES, "suite"} or int(name[2]) != run["run_attempt"]:
             continue
         try:
             result = parse_result(api.download(artifact["id"]), name[1])
@@ -173,11 +205,21 @@ def render(run, repository, server, profiles):
     if profiles:
         lines += ["", "Proefdetails zoals gerapporteerd door de run.", "",
                   "| Profiel | Proef | Uitslag |", "| --- | --- | --- |"]
-        for profile, (_, cases) in sorted(profiles.items()):
-            for key, passed in cases.items():
-                lines.append(f"| {profile} | {LABELS[key]} | {'Geslaagd' if passed else 'Afgekeurd'} |")
-        revisions = ", ".join(f"`{rev[:8]}`" for rev in sorted({rev for rev, _ in profiles.values()}))
+        identities = {}
+        for _, data in sorted(profiles.items()):
+            selection = ", ".join(data["profiles"])
+            for key, passed in data["cases"].items():
+                lines.append(f"| {selection} | {LABELS[key]} | {'Geslaagd' if passed else 'Afgekeurd'} |")
+                if identity := data["firmware"].get(key):
+                    identities.setdefault((identity["role"], identity["sha256"]), []).append(LABELS[key])
+        revisions = ", ".join(f"`{rev[:8]}`" for rev in sorted({data["revision"] for data in profiles.values()}))
         lines += ["", f"OpenQuatt-firmware volgens de run {revisions}."]
+        if identities:
+            lines += ["", "Gedeelde firmware (SHA-256):"]
+            roles = {"candidate": "Gewone Q Duo-bin", "lab": "GPIO/test-CA-labbin", "baseline": "Geheugenreferentie"}
+            for (role, digest), names in identities.items():
+                lines += ["", f"- {roles[role]} `{digest}`: {', '.join(names)}."]
+
     else:
         lines += ["", "De workflow leverde geen bruikbare proefdetails op."]
     lines += ["", f"[GitHub-run en volledige rapporten]({server}/{repository}/actions/runs/{run['id']})"]

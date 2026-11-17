@@ -167,3 +167,54 @@ class PrCommentTest(unittest.TestCase):
             self.assertEqual(api.download(10), b"report")
         api.request.assert_called_once_with("/actions/artifacts/10/zip")
         download.assert_called_once_with(url, timeout=12)
+
+
+class SharedSuiteCommentTest(unittest.TestCase):
+    @staticmethod
+    def suite_bundle(*, mutate=None):
+        cases = {"geheugen": True, "https": True, "power-house": True, "lowflow": True, "stooklijn": True}
+        identities = {key: {"role": "candidate" if key == "geheugen" else "lab",
+                            "sha256": ("c" if key == "geheugen" else "d")*64} for key in cases}
+        result = {"schema": 2, "profiles": ["https", "regeling", "stooklijn"], "cases": cases, "firmware": identities}
+        if mutate: mutate(result)
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, "w") as archive:
+            archive.writestr("pr-result.json", json.dumps(result))
+            archive.writestr("source-candidate.json", json.dumps({"repository": "OpenQuatt/OpenQuatt",
+                "target": "configs/heatpump_controller_q/duo.yaml", "revision": FIRMWARE}))
+        return data.getvalue()
+
+    def test_automatic_comment_includes_all_new_probes_and_shared_lab_hash(self):
+        api = FakeGitHub(); api.artifacts = [artifact(10, "suite")]
+        api.downloads[10] = self.suite_bundle()
+        self.assertTrue(publish(event(), REPO, SERVER, api))
+        text = api.writes[0][2]
+        for title in ("HTTPS, afgebroken verbinding", "Power House-vraag", "Flowverlies tijdens defrost", "Stooklijn"):
+            self.assertIn(title, text)
+        self.assertIn("d"*64, text)
+        self.assertIn("GPIO/test-CA-labbin", text)
+
+    def test_unknown_selection_missing_cases_or_firmware_never_publish_details(self):
+        mutations = (
+            lambda r: r.update(profiles=["https", "@reviewer"]),
+            lambda r: r["cases"].pop("https"),
+            lambda r: r["firmware"].pop("https"),
+            lambda r: r["firmware"]["https"].update(role="production"),
+            lambda r: r.update(schema=True),
+            lambda r: r.update(profiles=["https", "https"]),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                parse_result(self.suite_bundle(mutate=mutate), "suite")
+
+    def test_different_lab_images_cannot_be_reported_as_shared_firmware(self):
+        with self.assertRaisesRegex(ValueError, "gedeelde firmware"):
+            parse_result(self.suite_bundle(mutate=lambda r: r["firmware"]["https"].update(sha256="e"*64)), "suite")
+
+    def test_failed_unstarted_cases_can_be_reported_without_an_invented_firmware_hash(self):
+        def mutation(result):
+            result["cases"]["https"] = False
+            result["firmware"].pop("https")
+        result = parse_result(self.suite_bundle(mutate=mutation), "suite")
+        self.assertFalse(result["cases"]["https"])
+        self.assertNotIn("https", result["firmware"])
