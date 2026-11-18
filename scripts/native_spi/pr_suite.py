@@ -16,41 +16,12 @@ from .build import LAB
 from .memory_comparison import METRICS
 
 stop_requested = False
-BASE = "geheugen"
-CASES = {
-    BASE: ("Webbelasting en geheugen", "wifi", "pr-memory", "--seconds", "285"),
-    "herstart": ("Instellingen behouden na softwareherstart", "ethernet", "restart", "--restart-case", "software"),
-    "modbus": ("Modbus-uitval en herstel van HP2", "wifi", "odu-link-loss"),
-    "energie-uur": ("Energiehistorie bij uurwisseling en herstart", "ethernet", "energy-boundary", "--energy-case", "hour"),
-    "energie-dag": ("Energiehistorie bij dagwisseling", "ethernet", "energy-boundary", "--energy-case", "day"),
-    "power-house": ("Power House-vraag en Single/Duo", "wifi", "power-house", "--power-house-climate", "mild"),
-    "lowflow": ("Flowverlies tijdens defrost en herstel", "wifi", "lowflow"),
-    "ethernet-ntp": ("W5500-Ethernet en lokale tijdsynchronisatie", "ethernet", "compatibility",
-                     "--ntp-epoch", "1768474320", "--seconds", "90"),
-    "ethernet-failover": ("Automatische terugval van Ethernet naar Wi-Fi", "failover", "compatibility",
-                          "--seconds", "180"),
-}
-NETWORK_CASES = ("ethernet-ntp", "ethernet-failover")
-PROFILES = {
-    "basis": (BASE,),
-    "herstart": (BASE, "herstart"),
-    "modbus": (BASE, "modbus"),
-    "energie": (BASE, "energie-uur", "energie-dag"),
-    "regeling": (BASE, "power-house", "lowflow"),
-    "alles": tuple(case for case in CASES if case not in NETWORK_CASES),
-    "netwerk": (BASE, *NETWORK_CASES),
-    "uitgebreid": (BASE, "herstart", *NETWORK_CASES),
-}
-COSIM_PROFILES = ("basis", "herstart", "netwerk", "uitgebreid")
+from .pr_profiles import (BASE, CASES, COSIM_PROFILES, COSIM_SECONDS, LAB_CASES, PROFILES,
+                          selected_cases, selected_profiles)
 
 
 def select_cases(profile, backend):
-    cases = PROFILES[profile]
-    if backend == "cosim" and profile not in COSIM_PROFILES:
-        raise ValueError("Dit profiel vereist lokaal de macOS-backend.")
-    if backend == "native" and profile in ("netwerk", "uitgebreid"):
-        raise ValueError("Kies --backend cosim voor dit profiel.")
-    return cases
+    return selected_cases(profile, backend)
 
 
 def request_stop(_signum, _frame):
@@ -83,6 +54,9 @@ def run_case(key, firmware, backend, port_base, folder, extra=()):
     if backend == "cosim" and key == "herstart":
         network = "wifi"
 
+    if backend == "cosim" and key in COSIM_SECONDS:
+        options.extend(("--seconds", str(COSIM_SECONDS[key])))
+
     name = f"github-q-duo-{key}-{uuid.uuid4().hex[:10]}"
     folder.mkdir(parents=True)
     log = folder / "runner.log"
@@ -101,19 +75,36 @@ def run_case(key, firmware, backend, port_base, folder, extra=()):
             if source.is_file():
                 shutil.copyfile(source, folder / artifact)
     report_path = folder / "report.json"
-    report = json.loads(report_path.read_text()) if report_path.is_file() else {}
+    report = {}
+    report_error = None
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text())
+            if not isinstance(report, dict):
+                raise ValueError("Eindrapport is geen object")
+        except (OSError, ValueError) as exc:
+            report = {}
+            report_error = f"Onleesbaar eindrapport: {exc}"
+
     passed = exit_code == 0 and report.get("status") in ("PASS_COSIM", "PASS_NATIVE_EXTENSION")
     print(f"{title} {'geslaagd' if passed else 'afgekeurd'}", flush=True)
-    fallback = f"Geen geslaagd eindrapport. Zie runner.log (exitcode {exit_code})."
+    fallback = report_error or f"Geen geslaagd eindrapport. Zie runner.log (exitcode {exit_code})."
     return {"title": title, "passed": passed, "reasons": report.get("failure_reasons") or ([] if passed else [fallback]),
             "report": report}
 
 
-def run_suite(profile, firmware, backend, port_base, output, baseline=None):
+def run_suite(profile, firmware, backend, port_base, output, baseline=None, *, lab_firmware=None, https_fixture=None):
     cases = select_cases(profile, backend)
+    profiles = selected_profiles(profile, backend)
+    if backend == "cosim" and set(cases) & LAB_CASES and lab_firmware is None:
+        raise ValueError("Deze Ubuntu-proeven vereisen --lab-firmware met de gezamenlijke GPIO/test-CA-build.")
+    if "https" in cases and https_fixture is None:
+        raise ValueError("HTTPS vereist --https-fixture met de bijbehorende lokale test-CA.")
     output.mkdir(parents=True, exist_ok=True)
     results = {}
     comparison = ()
+    if baseline is not None and BASE not in cases:
+        raise ValueError("Kies basis bij een geheugenreferentie.")
     if baseline is not None and not stop_requested:
         key = "geheugen-baseline"
         results[key] = run_case(key, baseline, backend, port_base, output / key)
@@ -126,7 +117,10 @@ def run_suite(profile, firmware, backend, port_base, output, baseline=None):
         if stop_requested:
             break
         extra = comparison if key == BASE else ()
-        results[key] = run_case(key, firmware, backend, port_base, output / key, extra)
+        chosen = lab_firmware if backend == "cosim" and key in LAB_CASES else firmware
+        if key == "https":
+            extra += ("--https-fixture", str(https_fixture))
+        results[key] = run_case(key, chosen, backend, port_base, output / key, extra)
 
     lines = ["## Q Duo · virtuele HIL", ""]
     base_result = results.get(BASE, {})
@@ -151,12 +145,31 @@ def run_suite(profile, firmware, backend, port_base, output, baseline=None):
             lines.append(f"| {label} | {values} |")
     if baseline is not None and not comparison:
         lines += ["", "Voor een geheugenvergelijking is een geslaagde referentiemeting nodig."]
+    for key, result in results.items():
+        if key in (BASE, "geheugen-baseline"):
+            continue
+        phases = result["report"].get("memory", {}).get("phases", {})
+        if phases:
+            lines += ["", f"### Intern geheugen · {result['title']}", "",
+                      "| Fase | Vrije heap, laagste | Heapmin sinds boot | Grootste vrije blok, laagste |",
+                      "| --- | ---: | ---: | ---: |"]
+            for phase, values in phases.items():
+                metrics = " | ".join(str(values.get(metric, "Geen meting")) for metric in METRICS)
+                lines.append(f"| {phase} | {metrics} |")
     memory_report = output / BASE / "pr-memory.md"
     if memory_report.is_file():
         lines += ["", memory_report.read_text().rstrip()]
     (output / "summary.md").write_text("\n".join(lines) + "\n")
+    case_status = {key: False for key in cases}
+    case_status.update({key: result["passed"] for key, result in results.items()})
+    identities = {}
+    for key, result in results.items():
+        digest = result["report"].get("input", {}).get("sha256")
+        if digest:
+            role = "lab" if backend == "cosim" and key in LAB_CASES else "candidate"
+            identities[key] = {"role": "baseline" if key == "geheugen-baseline" else role, "sha256": digest}
     (output / "pr-result.json").write_text(json.dumps({
-        "profile": profile, "cases": {key: result["passed"] for key, result in results.items()},
+        "schema": 2, "profiles": profiles, "cases": case_status, "firmware": identities,
     }))
     if stop_requested:
         return 130
@@ -167,7 +180,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--firmware", type=Path, required=True)
     parser.add_argument("--baseline-firmware", type=Path)
-    parser.add_argument("--profile", choices=PROFILES, default="basis")
+    parser.add_argument("--profile", default="basis", help="Een of meer kommagescheiden profielen")
+    parser.add_argument("--lab-firmware", type=Path)
+    parser.add_argument("--https-fixture", type=Path)
     parser.add_argument("--backend", choices=("cosim", "native"), required=True)
     parser.add_argument("--port-base", type=int, default=19460)
     parser.add_argument("--output", type=Path, required=True)
@@ -176,7 +191,9 @@ def main():
         signal.signal(sig, request_stop)
     try:
         return run_suite(args.profile, args.firmware.resolve(), args.backend, args.port_base, args.output.resolve(),
-                         args.baseline_firmware.resolve() if args.baseline_firmware else None)
+                         args.baseline_firmware.resolve() if args.baseline_firmware else None,
+                         lab_firmware=args.lab_firmware.resolve() if args.lab_firmware else None,
+                         https_fixture=args.https_fixture.resolve() if args.https_fixture else None)
     except ValueError as exc:
         parser.error(str(exc))
 

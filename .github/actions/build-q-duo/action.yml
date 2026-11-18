@@ -1,16 +1,25 @@
-name: Build Q Duo factory firmware
-description: Build the selected revision and record its firmware identity
+name: Build shared Q Duo firmware
+description: Build production once, optionally one shared GPIO and HTTPS lab image
 inputs:
   ref:
-    description: OpenQuatt source ref
+    description: Exact OpenQuatt source commit
     required: true
   role:
-    description: Firmware role and checkout directory
+    description: candidate or baseline
     required: true
-  artifact_suffix:
-    description: Shared build plan key
-    required: true
-
+  lab:
+    description: Also build the shared GPIO and test-CA lab image
+    default: 'false'
+outputs:
+  firmware_directory:
+    value: ${{ steps.build.outputs.firmware_directory }}
+    description: Production firmware and source manifest
+  lab_directory:
+    value: ${{ steps.build.outputs.lab_directory }}
+    description: Optional test-only lab firmware and source manifest
+  https_fixture:
+    value: ${{ steps.build.outputs.https_fixture }}
+    description: Private TLS fixture kept on this runner
 runs:
   using: composite
   steps:
@@ -27,38 +36,61 @@ runs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-    - name: Build and verify firmware
+    - name: Build shared production and lab firmware
+      id: build
       shell: bash
       working-directory: ${{ inputs.role }}
       env:
         BUNDLE_ROLE: ${{ inputs.role }}
+        BUILD_LAB: ${{ inputs.lab }}
       run: |
+        set -euo pipefail
+        [[ "$BUNDLE_ROLE" == candidate || "$BUNDLE_ROLE" == baseline ]]
+        [[ "$BUILD_LAB" == true || "$BUILD_LAB" == false ]]
+        source_root="$PWD"
         npm ci --ignore-scripts
         npm run build:web
         python -m venv "$RUNNER_TEMP/venv-$BUNDLE_ROLE"
         source "$RUNNER_TEMP/venv-$BUNDLE_ROLE/bin/activate"
         python -m pip install -r .github/requirements-esphome.txt
         source_revision="$(git rev-parse HEAD)"
-        target=configs/heatpump_controller_q/duo.yaml
         export ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT=2
-        esphome -s build_source_repository OpenQuatt/OpenQuatt \
-          -s build_source_commit "$source_revision" -s build_target "$target" compile "$target"
-        build_dir=.esphome/build/heatpump_controller_q_duo/build
-        python scripts/repair_factory_bin.py "$build_dir" --normalize-app
+        export IDF_PY_BUILD_JOBS=2 CMAKE_BUILD_PARALLEL_LEVEL=2
+        build_one() {
+          local target="$1" build_dir="$2" bundle="$3" profile="$4" test_only="$5"
+          esphome -s build_source_repository OpenQuatt/OpenQuatt \
+            -s build_source_commit "$source_revision" -s build_target "$target" compile "$target"
+          python scripts/repair_factory_bin.py "$build_dir" --normalize-app
+          mkdir -p "$bundle"
+          cp "$build_dir/firmware.factory.bin" "$bundle/"
+          (cd "$bundle" && sha256sum firmware.factory.bin > firmware.sha256)
+          jq -n --arg revision "$source_revision" --arg target "$target" \
+            --arg esphome "$(esphome version)" --arg profile "$profile" \
+            --arg firmware_sha256 "$(cut -d ' ' -f 1 "$bundle/firmware.sha256")" \
+            --argjson test_only "$test_only" \
+            '{repository:"OpenQuatt/OpenQuatt",revision:$revision,target:$target,esphome:$esphome,
+              profile:$profile,test_only:$test_only,firmware_sha256:$firmware_sha256}' > "$bundle/source.json"
+          printf '%s firmware SHA-256: %s\n' "$profile" "$(cut -d ' ' -f 1 "$bundle/firmware.sha256")"
+        }
         bundle="$RUNNER_TEMP/q-duo-$BUNDLE_ROLE"
-        mkdir -p "$bundle"
-        cp "$build_dir/firmware.factory.bin" "$bundle/"
-        (
-          cd "$bundle"
-          sha256sum firmware.factory.bin > firmware.sha256
-        )
-        jq -n --arg revision "$source_revision" --arg target "$target" \
-          --arg esphome "$(esphome version)" \
-          '{repository:"OpenQuatt/OpenQuatt",revision:$revision,target:$target,esphome:$esphome}' \
-          > "$bundle/source.json"
-    - uses: actions/upload-artifact@v6
-      with:
-        name: q-duo-${{ inputs.role }}-${{ inputs.artifact_suffix }}
-        path: ${{ runner.temp }}/q-duo-${{ inputs.role }}/
-        if-no-files-found: error
-        retention-days: 1
+        build_one configs/heatpump_controller_q/duo.yaml \
+          .esphome/build/heatpump_controller_q_duo/build "$bundle" production false
+        echo "firmware_directory=$bundle" >> "$GITHUB_OUTPUT"
+        if [[ "$BUILD_LAB" == true ]]; then
+          fixture="$RUNNER_TEMP/virtual-hil-private-tls"
+          (
+            cd "$GITHUB_WORKSPACE"
+            python -B -m scripts.native_spi.firmware_lab --firmware-root "$source_root" --fixture "$fixture"
+          )
+          lab="$RUNNER_TEMP/q-duo-lab"
+          build_one configs/heatpump_controller_q/.virtual-https.yaml \
+            .esphome/build/virtual_https/build "$lab" gpio_opentherm_https_lab true
+          (
+            cd "$GITHUB_WORKSPACE"
+            python -B -m scripts.native_spi.https_fixture --firmware-root "$source_root" \
+              --output "$fixture" --bind-firmware "$lab/firmware.factory.bin"
+          )
+          cp .virtual-hil/recipe.json "$lab/recipe.json"
+          echo "lab_directory=$lab" >> "$GITHUB_OUTPUT"
+          echo "https_fixture=$fixture" >> "$GITHUB_OUTPUT"
+        fi

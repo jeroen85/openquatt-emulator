@@ -74,14 +74,14 @@ Voor Windows gebruik je Ubuntu onder WSL2. Installeer Ubuntu bijvoorbeeld met `w
 
 Kies voor de W5500-rooktest `--network ethernet`. Voor het doormeten van automatische terugval kies je `--network failover --seconds 180`. Met `--network ethernet --ntp-epoch 1768474320` controleert de rooktest tevens of de firmware de lokale klok overneemt. De tijd loopt vanaf die UTC-epoch. Het rapport bevat het aantal NTP-antwoorden en de uitgelezen firmwaretijd. Alle testservers luisteren op loopback. De lokale fixture beantwoordt DNS en NTP zelf.
 
-Draai de vier Ubuntu-proeven achter elkaar met dezelfde factory-bin:
+Draai de vier gewone Ubuntu-basisproeven achter elkaar met dezelfde factory-bin:
 
 ```sh
-python3 -m scripts.native_spi.pr_suite --backend cosim --profile uitgebreid \
+python3 -m scripts.native_spi.pr_suite --backend cosim --profile herstart,netwerk \
   --firmware /pad/naar/firmware.factory.bin --port-base 19600 --output ./oq-hil-resultaten
 ```
 
-Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `regeling`, `energie` en `alles` de lokale macOS-backend. De afzonderlijke Ubuntu-scenario’s voor [HTTPS, Power House, lowflowherstel en stooklijn](ubuntu-scenarios.md) beschrijven hun benodigde labbuilds en geheugenmetingen. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
+Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `regeling`, `energie` en `alles` de lokale macOS-backend. Het profiel `uitgebreid` voegt [HTTPS, Power House, lowflowherstel en stooklijn](ubuntu-scenarios.md) toe met één gedeelde labbin. De GitHub-workflow bouwt deze zelf. Bij lokaal gebruik geef je `--lab-firmware` en `--https-fixture` mee. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
 
 #### OpenTherm-uitval en herstel op Ubuntu
 

@@ -47,26 +47,44 @@ Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. 
 
 OpenQuatt gebruikt de gewone CI-checks en gerichte regressietests. Aanvullende HIL-proeven volgen het risico van de wijziging. De [PR-richtlijn](https://github.com/OpenQuatt/OpenQuatt/blob/dev/CONTRIBUTING.md#pull-request-validation) behandelt aansturing en hardware apart van runtimegeheugen.
 
-De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op één Ubuntu x64-runner. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits. Tegelijk meet hij de vrije interne heap, heapmin sinds boot en het grootste vrije blok in de vensters vóór, tijdens en na overlappende SSE en downloads.
+De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op Ubuntu x64. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits, met vrije interne heap, heapmin en het grootste vrije blok vóór, tijdens en na overlappende SSE en downloads.
 
-Na afloop van een automatische run voor een PR in de emulatorrepo verschijnt één reactie met de uitslag, de geteste commit en een link naar de rapporten. Een nieuwe run of hertest werkt diezelfde reactie bij. De publicatieworkflow werkt zodra hij op de standaardbranch staat. De workflow plaatst de reactie alleen als GitHub de run aan één actuele PR in deze emulatorrepo koppelt.
+Kies aanvullende proeven met een PR-label of via **Actions → Virtual HIL → Run workflow**. Labels blijven bij nieuwe commits actief; verwijder ze na de proef om onnodige herhaling te voorkomen. Een labelwijziging buiten deze lijst start geen firmwareproef en vervangt de bestaande PR-reactie niet.
 
-Voeg op een emulator-PR het label `hil:uitgebreid` toe om alle Ubuntu-proeven voor die PR te starten. Zolang het label erop staat, doet de workflow dat ook bij elke nieuwe commit op de PR. Haal het label na de proef weg om bij de volgende commit terug te gaan naar `basis`.
-
-Kies bij **Actions → Virtual HIL → Run workflow** de OpenQuatt-commit of PR-ref in `openquatt_ref`. Een lege invoer gebruikt de vastgezette Q Duo-firmwarerevisie uit de workflow. Geef de actuele bronrevisie expliciet op wanneer je een firmwarewijziging wilt toetsen. Gebruik `profile` voor één profiel of vul bij `profiles` bijvoorbeeld `herstart,netwerk` in. Een ingevuld `profiles` krijgt voorrang. Kies `uitgebreid` afzonderlijk om alle Ubuntu-proeven op één runner achter elkaar uit te voeren.
-
-| Profiel | Aanvulling op de basisrun |
+| Profiel / PR-label | Proeven naast de basisrun |
 | --- | --- |
-| `basis` | Rooktest en geheugen onder webbelasting |
-| `herstart` | Instelling opslaan, softwareherstart en opnieuw uitlezen |
-| `netwerk` | W5500-Ethernet, lokale NTP en terugval naar Wi-Fi |
-| `uitgebreid` | Bovenstaande proeven achter elkaar, met één basisrun |
+| `basis` / `hil:basis` | Alleen rooktest en geheugen onder webbelasting |
+| `herstart` / `hil:herstart` | Instelling opslaan, softwareherstart en opnieuw uitlezen |
+| `netwerk` / `hil:netwerk` | W5500-Ethernet, lokale NTP en terugval naar Wi-Fi |
+| `https` / `hil:https` | Weerdata en manifest, TLS-serialisatie, verbinding afbreken en herstel naast SSE en webdownloads |
+| `regeling` / `hil:regeling` | Power House-vraagopbouw/-afbouw, Single/Duo, stop/herstart en lowflow tijdens defrost met herstel |
+| `stooklijn` / `hil:stooklijn` | Defrostblokkade, Duo-inschakeling en afbouw naar stabiel Single |
+| `regeling-kern` / `hil:regeling-kern` | Alleen Power House en stooklijn op dezelfde labbin, zonder basisproef |
+| `uitgebreid` / `hil:uitgebreid` | Alle acht Ubuntu-proeven hierboven, inclusief één basisrun |
 
-GitHub voert elk profiel op Ubuntu uit. Kies eventueel `architecture=arm64`. Andere workflows in de emulatorrepo kunnen dezelfde profielen via `workflow_call` starten. De geselecteerde profielen delen één Q Duo-factory-bin en bewaren de commit en SHA-256 in hun rapport.
+Meerdere labels combineren hun proeven. Bij een handmatige run kun je hetzelfde doen met `profiles`, bijvoorbeeld `https,regeling,stooklijn`. De selectie wordt ontdubbeld: een geselecteerde basis- en geheugenproef draait één keer en de gekozen firmwareproeven lopen achter elkaar op **één Ubuntu-runner**. `uitgebreid` kies je afzonderlijk; het label heeft voorrang op de andere HIL-labels.
 
-Gebruik voor Modbus-uitval onder warmtevraag en energiehistorie de lokale runner met `--backend native` op Apple Silicon. De CLI-profielen `modbus`, `energie`, `regeling` en `alles` blijven daar beschikbaar. [Power House, lowflowherstel en stooklijn op Ubuntu](ubuntu-scenarios.md) zijn als afzonderlijke scenario’s beschikbaar met de GPIO-labbin. HTTPS op Ubuntu gebruikt de test-CA-build. De GitHub-profielkeuze bevat de vier draagbare basisproeven.
+Zonder `openquatt_ref` wordt bij het plannen de actuele OpenQuatt-`dev` opgehaald. Voeg op een emulator-PR één label `hil:ref:<volledige-commit-SHA>` toe om met dezelfde OpenQuatt-revisie te hertesten. Start daarna de proef met het gewenste HIL-profiel. Geef voor een firmware-PR de volledige commit of `refs/pull/<nummer>/merge` op. De planner zet de ref één keer om naar een commit-SHA; alle builds gebruiken daarna exact die revisie. `architecture` kiest x64 of arm64. Hetzelfde is beschikbaar via `workflow_call`.
 
-Vul voor een geheugenvergelijking bij `baseline_ref` bijvoorbeeld de exacte dev-commit in waar de kandidaat op gebaseerd is. Bij een andere commit bouwt GitHub één extra firmwarebin. Bij dezelfde commit meet GitHub de kandidaatbin tweemaal met een verse flashkopie. Bij meerdere profielen draait de vergelijking één keer. De baseline en kandidaat draaien achter elkaar op dezelfde runner. Het rapport toont de verschillen per fase en het bewijs voor overlap. Zolang de virtuele meetgrenzen niet zijn gekalibreerd zie je verschillen in bytes zonder automatisch regressieoordeel. Bij relevante veranderingen in buffers, taken of overlappende netwerkactiviteit blijft de hardwaregeheugenproef van OpenQuatt vereist.
+### Gedeelde firmware en geheugen
+
+De workflow bouwt één gewone Q Duo-bin voor de basisrun, softwareherstart en netwerkproeven. Wanneer een van de vier labproeven wordt gekozen, bouwt hij daarnaast **één gezamenlijke GPIO/test-CA-labbin**. HTTPS, Power House, lowflow en stooklijn gebruiken diezelfde labbin. Webbronnen en ESPHome worden per broncheckout klaargezet; firmwarevarianten worden sequentieel gebouwd met maximaal twee compilerjobs.
+
+De labreceptuur en GPIO-bronnen staan in deze emulatorrepo. De voorbereiding controleert hun hashes en of de ontvangstpatch op de gekozen OpenQuatt-revisie past. De productieconfiguratie blijft behouden. De extra configuratie heeft de herkenbare naam `openquatt-ot-lab`; gebruik deze uitsluitend in de emulator. De TLS-CA en privésleutels worden op de testrunner gegenereerd en blijven daar. Ze worden niet als artefact geüpload. De volledige testsessie draait in een eigen Linux-netwerknamespace met alleen loopback; ook automatische achtergrondverzoeken van de firmware bereiken zo geen extern internet. Bouwen en runtime-installatie gebeuren daarvóór.
+
+Combineer `regeling-kern` met `basis` als je ook een geheugenbaseline wilt. Vul bij `baseline_ref` de gewenste referentie in voor de bestaande webgeheugenvergelijking. Bij dezelfde OpenQuatt-commit wordt de gewone kandidaatbin tweemaal gestart met een verse flashkopie. Alleen bij een andere commit volgt één extra gewone firmwarebuild. Baseline en kandidaat draaien achter elkaar op dezelfde host, vóór de aanvullende proeven. Een andere ESPHome-versie geeft afkeur van de vergelijking.
+
+Alle nieuwe proeven meten de vrije interne heap, heapmin sinds boot en het grootste vrije blok in hun eigen fasen. Die meetwaarden verschijnen in het volledige rapport. Dit zijn geen baselinevergelijkingen voor Power House, stooklijn of HTTPS. Werkelijke DRAM-, DMA- en stackmarges vragen fysieke HIL.
+
+### Automatische PR-reactie en duur
+
+Na iedere voltooide automatische run voor een PR in deze emulatorrepo verschijnt één botreactie met de uitslag, de geteste PR-commit, de OpenQuatt-revisie en de proeven. De reactie toont de gedeelde firmwarehashes en verwijst naar de volledige rapporten. Een nieuwe run of hertest werkt dezelfde reactie bij. Een oude run voor een vorige PR-commit mag de actuele uitslag niet overschrijven.
+
+De rapporteur draait vanaf vertrouwde `main` in een afzonderlijke `workflow_run` met schrijfrecht. De testworkflow heeft alleen leesrechten. Rapportartefacten worden als begrensde gegevens verwerkt; PR-code wordt niet met het schrijftoken uitgevoerd. Handmatige runs leveren een Actions-samenvatting en artefacten, maar plaatsen geen reactie op een willekeurige OpenQuatt-PR waarvan alleen een ref is gekozen.
+
+De gewone firmwaretimers blijven actief. Alleen al Power House, lowflow en stooklijn gebruiken 55, ruim 18 en 50 hostminuten; HTTPS gebruikt 7 minuten. `uitgebreid` vraagt ongeveer 2,5 uur testtijd plus bouwen. Kies bij gerichte wijzigingen de betreffende profielen. Een job die wegens GitHub-budget of runnerbeschikbaarheid niet start, is **geblokkeerd** en heeft geen firmwaretest uitgevoerd.
+
+De overige lokale scenario’s, zoals Modbus-uitval onder warmtevraag en energiehistorie, houden hun eigen kwalificatie. Deze uitbreiding voegt ze niet aan GitHub toe.
 
 ## Gerichte firmwareproeven
 

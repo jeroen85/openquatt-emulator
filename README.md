@@ -4,7 +4,7 @@ Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virt
 
 ## Installatie en gebruik
 
-Op Ubuntu en Apple Silicon draait de CLI via co-simulatie met esp-emu 1.1.0. Het profiel `uitgebreid` test webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en terugval naar Wi-Fi. Voor Windows is er een WSL2-route. Power House, lowflowherstel en stooklijn zijn via co-simulatie beschikbaar met de aparte OpenTherm-GPIO-labbin. De desktopwerkbank en de overige regelscenario’s gebruiken de lokale macOS-backend. [Installatie en profielkeuze](docs/handleiding.md#linux-en-windows-met-wsl2)
+Op Ubuntu en Apple Silicon draait de CLI via co-simulatie met esp-emu 1.1.0. Het profiel `uitgebreid` test webbelasting en geheugen, softwareherstart, netwerk, HTTPS, Power House, lowflowherstel en stooklijn. Voor Windows is er een WSL2-route. Power House, lowflowherstel en stooklijn zijn via co-simulatie beschikbaar met de aparte OpenTherm-GPIO-labbin. De desktopwerkbank en de overige regelscenario’s gebruiken de lokale macOS-backend. [Installatie en profielkeuze](docs/handleiding.md#linux-en-windows-met-wsl2)
 
 De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. De CLI biedt ook een dynamische proef met OTT, OTB, compressor, flow en defrost. Je vindt er uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
 
@@ -48,7 +48,9 @@ HTTPS gebruikt een afzonderlijke lokale test-CA-build.
 
 ## GitHub Actions
 
-De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait standaard één Q Duo-rooktest met geheugenmeting onder webbelasting op Linux x64. Kies bij een handmatige run de OpenQuatt-ref en een Ubuntu-profiel. Met `uitgebreid` draaien de vier proeven achter elkaar op één Ubuntu-runner. De geheugenproef bevat ook de rooktest. De proeven delen één Q Duo-factory-bin. Een baseline-ref leidt alleen tot een extra build als hij naar een andere OpenQuatt-commit verwijst. [Profielen en rapporten](docs/scenarios.md#firmwareproeven-op-github)
+De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait standaard één Q Duo-rooktest met geheugenmeting onder webbelasting op Ubuntu x64. Met PR-labels zoals `hil:https`, `hil:regeling` en `hil:stooklijn` kies je extra proeven. `hil:uitgebreid` voert alle acht proeven uit. Meerdere profielen draaien ontdubbeld achter elkaar op één Ubuntu-runner.
+
+De basisproeven delen één gewone Q Duo-bin. HTTPS en de regelproeven delen één extra GPIO/test-CA-labbin. Een andere geheugenbaseline vraagt pas een extra build als hij naar een andere OpenQuatt-commit verwijst. De uitslag verschijnt automatisch als PR-reactie, inclusief de firmwarehashes. De skill blijft lokaal. [Profielen, buildkeuze en rapportage](docs/scenarios.md#firmwareproeven-op-github)
 
 ## Gevalideerd met een ongewijzigde Q Duo-bin
 

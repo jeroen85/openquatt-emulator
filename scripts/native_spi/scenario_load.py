@@ -11,6 +11,10 @@ import zlib
 from .http_response import bounded_response
 
 
+SSE_IDLE_SECONDS = 4
+SSE_GAP_MS = 12000
+MAX_SSE_SESSIONS = 64
+
 
 def read_web_asset(response):
     """Validate the wire body and bounded gzip content of the embedded bundle."""
@@ -54,7 +58,8 @@ class ScenarioLoad:
         self.stop = threading.Event()
         self.lock = threading.Lock()
         self.threads = []
-        self.result = {"sse_events": 0, "sse_times_ms": [], "gets": [], "scope": "SSE and web assets during regulation"}
+        self.result = {"sse_events": 0, "sse_times_ms": [], "sse_sessions": [],
+                       "gets": [], "scope": "SSE and web assets during regulation"}
 
     def start(self):
         if self.threads:
@@ -65,29 +70,49 @@ class ScenarioLoad:
             worker.start()
 
     def sse(self):
-        try:
-            with bounded_response(self.port, "/events", self.deadline, self.stop.is_set) as response:
-                if response.status != 200:
-                    raise ValueError("SSE response status")
-                for line in iter(lambda: response.readline(65537), b""):
-                    if len(line) > 65536:
-                        raise ValueError("SSE line bound exceeded")
-                    if line.startswith(b"data:"):
-                        with self.lock:
+        sessions = self.result["sse_sessions"]
+        times = self.result["sse_times_ms"]
+        while not self.stop.is_set() and time.monotonic() < self.deadline:
+            with self.lock:
+                if len(sessions) >= MAX_SSE_SESSIONS:
+                    self.result["sse_error"] = "SSE reconnect limit exceeded"
+                    return
+                session = {"begin_index": len(times)}
+                sessions.append(session)
+            last_event = time.monotonic()
+
+            def idle():
+                return time.monotonic() - last_event >= SSE_IDLE_SECONDS
+
+            try:
+                with bounded_response(self.port, "/events", self.deadline,
+                                      lambda: self.stop.is_set() or idle(),
+                                      connect_timeout=SSE_IDLE_SECONDS) as response:
+                    if response.status != 200:
+                        raise ValueError(f"SSE response status {response.status}")
+                    for line in iter(lambda: response.readline(65537), b""):
+                        if len(line) > 65536:
+                            raise ValueError("SSE line bound exceeded")
+                        if line.startswith(b"data:"):
+                            last_event = time.monotonic()
                             now = self.clock()
-                            times = self.result["sse_times_ms"]
-                            if len(times) >= 100000:
-                                raise ValueError("SSE event history bound exceeded")
-                            times.append(now)
-                            self.result.setdefault("sse_first_ms", now)
-                            self.result["sse_last_ms"] = now
-                            self.result["sse_events"] += 1
-                if not self.stop.is_set():
+                            with self.lock:
+                                if len(times) >= 100000:
+                                    self.result["sse_error"] = "SSE event history bound exceeded"
+                                    return
+                                times.append(now)
+                                self.result.setdefault("sse_first_ms", now)
+                                self.result["sse_last_ms"] = now
+                                self.result["sse_events"] += 1
                     raise EOFError("SSE stream ended before the test completed")
-        except (OSError, EOFError, ValueError, http.client.HTTPException) as error:
-            if not self.stop.is_set() and time.monotonic() < self.deadline:
+            except (OSError, EOFError, ValueError, http.client.HTTPException) as error:
+                if not self.stop.is_set() and time.monotonic() < self.deadline:
+                    with self.lock:
+                        session["error"] = "SSE idle timeout" if idle() else str(error)
+            finally:
                 with self.lock:
-                    self.result["sse_error"] = str(error)
+                    session["end_index"] = len(times)
+            self.stop.wait(0.2)
 
     def assets(self):
         next_ms = 0
@@ -115,27 +140,34 @@ class ScenarioLoad:
         self.result["clients_stopped"] = all(not thread.is_alive() for thread in self.threads)
         return self.result["clients_stopped"]
 
-    def finalize(self, windows):
+    def finalize(self, windows, end_ms=None):
         with self.lock:
             times = self.result["sse_times_ms"]
+            if end_ms is not None:
+                times = times[:bisect.bisect_right(times, end_ms)]
+            # Reconnecting may preserve the event-gap budget. It cannot
+            # make a download that crosses two sessions count as overlap.
+            boundaries = sorted({s["begin_index"] for s in self.result["sse_sessions"] if s["begin_index"]})
             for row in self.result["gets"]:
                 before = bisect.bisect_right(times, row["begin_ms"]) - 1
                 after = bisect.bisect_left(times, row["end_ms"])
                 row["sse_overlap"] = (0 <= before < len(times) and after < len(times)
-                    and all(0 <= b - a <= 12000 for a, b in zip(
+                    and bisect.bisect_right(boundaries, before) == bisect.bisect_right(boundaries, after)
+                    and all(0 <= b - a <= SSE_GAP_MS for a, b in zip(
                         times[before:after + 1], times[before + 1:after + 1])))
             rows = [row for row in self.result["gets"] if row["ok"] and row["sse_overlap"]]
             checks = {"clients_stopped": self.result.get("clients_stopped") is True,
-                      "sse": self.result["sse_events"] >= 2 and not self.result.get("sse_error"),
-                      "sse_continuous": len(times) >= 2 and all(0 <= b - a <= 12000
-                          for a, b in zip(times, times[1:])),
+                      "sse": len(times) >= 2 and not self.result.get("sse_error"),
+                      "sse_continuous": len(times) >= 2 and all(0 <= b - a <= SSE_GAP_MS
+                          for a, b in zip(times, times[1:]))
+                          and (end_ms is None or 0 <= end_ms - times[-1] <= SSE_GAP_MS),
                       "overlapping_downloads": len(rows) >= 2}
             if windows:
                 for phase, (begin, end) in windows.items():
                     if phase != "startup":
                         window_times = times[bisect.bisect_left(times, begin):bisect.bisect_right(times, end)]
-                        covered = (bool(window_times) and window_times[0] - begin <= 12000
-                                   and end - window_times[-1] <= 12000)
+                        covered = (bool(window_times) and window_times[0] - begin <= SSE_GAP_MS
+                                   and end - window_times[-1] <= SSE_GAP_MS)
                         checks[phase] = covered and any(
                             begin <= row["begin_ms"] <= row["end_ms"] <= end for row in rows)
             else:

@@ -1,5 +1,5 @@
 name: Virtual HIL
-run-name: ${{ github.event.action == 'labeled' && github.event.label.name != 'hil:uitgebreid' && 'Virtuele HIL · Geen proef aangevraagd' || 'Virtual HIL' }}
+run-name: ${{ github.event.action == 'labeled' && !contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:stooklijn","hil:regeling-kern","hil:uitgebreid"]'), github.event.label.name) && 'Virtuele HIL · Geen proef aangevraagd' || 'Virtual HIL' }}
 
 on:
   pull_request:
@@ -21,7 +21,7 @@ on:
         description: Aanvullende firmwareproeven
         type: choice
         default: basis
-        options: [basis, herstart, netwerk, uitgebreid]
+        options: [basis, herstart, netwerk, https, regeling, stooklijn, regeling-kern, uitgebreid]
       profiles:
         description: Meerdere profielen, kommagescheiden. Overschrijft profile.
         type: string
@@ -53,17 +53,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: virtual-hil-${{ github.ref }}-${{ inputs.profiles || inputs.profile || 'basis' }}-${{ inputs.openquatt_ref }}-${{ inputs.baseline_ref }}-${{ inputs.architecture || 'x64' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'hil:uitgebreid' && github.run_id || 'tests' }}
+  group: virtual-hil-${{ github.ref }}-${{ inputs.profiles || inputs.profile || 'basis' }}-${{ inputs.openquatt_ref }}-${{ inputs.baseline_ref }}-${{ inputs.architecture || 'x64' }}-${{ github.event.action == 'labeled' && !contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:stooklijn","hil:regeling-kern","hil:uitgebreid"]'), github.event.label.name) && github.run_id || 'tests' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   plan:
-    if: ${{ github.event.action != 'labeled' || github.event.label.name == 'hil:uitgebreid' }}
+    if: ${{ github.event.action != 'labeled' || contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:stooklijn","hil:regeling-kern","hil:uitgebreid"]'), github.event.label.name) }}
     name: Proeven en firmwareversies kiezen
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      matrix: ${{ steps.selection.outputs.matrix }}
+      profiles: ${{ steps.selection.outputs.profiles }}
+      runner: ${{ steps.selection.outputs.runner }}
+      label: ${{ steps.selection.outputs.label }}
+      lab: ${{ steps.selection.outputs.lab }}
+      timeout_minutes: ${{ steps.selection.outputs.timeout_minutes }}
       candidate: ${{ steps.selection.outputs.candidate }}
       baseline: ${{ steps.selection.outputs.baseline }}
       artifact_key: ${{ steps.selection.outputs.artifact_key }}
@@ -71,10 +75,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Resolve the requested OpenQuatt source
+        id: source
+        if: ${{ inputs.openquatt_ref == '' }}
+        run: python3 -B -m scripts.native_spi.pr_plan --source-ref
       - uses: actions/checkout@v6
         with:
           repository: OpenQuatt/OpenQuatt
-          ref: ${{ inputs.openquatt_ref || 'b215a3511ab7c05d9a0bad782b894420a98cbcef' }}
+          ref: ${{ inputs.openquatt_ref || steps.source.outputs.ref }}
           path: plan-candidate
           persist-credentials: false
       - uses: actions/checkout@v6
@@ -88,7 +96,7 @@ jobs:
         id: selection
         shell: bash
         env:
-          PROFILES: ${{ inputs.profiles || inputs.profile || (contains(github.event.pull_request.labels.*.name, 'hil:uitgebreid') && 'uitgebreid' || 'basis') }}
+          PROFILES: ${{ inputs.profiles || inputs.profile }}
           ARCHITECTURE: ${{ inputs.architecture || 'x64' }}
         run: |
           export CANDIDATE_SHA="$(git -C plan-candidate rev-parse HEAD)"
@@ -100,7 +108,7 @@ jobs:
           python3 -B -m scripts.native_spi.pr_plan
 
   emulator-checks:
-    if: ${{ github.event.action != 'labeled' || github.event.label.name == 'hil:uitgebreid' }}
+    if: ${{ github.event.action != 'labeled' || contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:stooklijn","hil:regeling-kern","hil:uitgebreid"]'), github.event.label.name) }}
     name: Emulator controleren
     runs-on: ubuntu-24.04
     timeout-minutes: 8
@@ -113,15 +121,7 @@ jobs:
           python-version: '3.13'
       - name: Test the runner and scenarios
         run: |
-          python -B -m unittest \
-            scripts.native_spi.test_tooling \
-            scripts.native_spi.test_pr_memory \
-            scripts.native_spi.test_scenarios \
-            scripts.native_spi.test_power_house \
-            scripts.native_spi.test_extended_scenarios \
-            scripts.native_spi.test_safety_scenarios \
-            scripts.native_spi.test_runtime_scenarios scripts.native_spi.test_cosim \
-            scripts.native_spi.test_pr_suite scripts.native_spi.test_pr_plan scripts.native_spi.test_pr_comment
+          python -B -m unittest discover -s scripts/native_spi -t . -p 'test_*.py'
       - name: Test the native models
         shell: bash
         run: |
@@ -132,123 +132,93 @@ jobs:
             scripts/native_spi/native/odu_bridge.cpp -o "$RUNNER_TEMP/test_scenarios"
           "$RUNNER_TEMP/test_scenarios"
 
-  q-duo-firmware:
-    name: Q Duo-firmware bouwen
-    needs: plan
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
+  q-duo-hil:
+    name: Q Duo · ${{ needs.plan.outputs.label }}
+    needs: [plan, emulator-checks]
+    runs-on: ${{ needs.plan.outputs.runner }}
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.timeout_minutes || '30') }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: ./.github/actions/build-q-duo
+      - name: Install Linux dependencies
+        run: sudo apt-get install -y lsof pkg-config libslirp-dev libglib2.0-dev iproute2
+      - name: Build the shared candidate images
+        id: firmware
+        uses: ./.github/actions/build-q-duo
         with:
           ref: ${{ needs.plan.outputs.candidate }}
           role: candidate
-          artifact_suffix: ${{ needs.plan.outputs.artifact_key }}
-
-  q-duo-baseline:
-    name: Referentiefirmware bouwen
-    if: ${{ needs.plan.outputs.baseline != '' && needs.plan.outputs.baseline != needs.plan.outputs.candidate }}
-    needs: [plan, q-duo-firmware]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/build-q-duo
+          lab: ${{ needs.plan.outputs.lab }}
+      - name: Build a different baseline only when required
+        id: baseline
+        if: ${{ needs.plan.outputs.baseline != '' && needs.plan.outputs.baseline != needs.plan.outputs.candidate }}
+        uses: ./.github/actions/build-q-duo
         with:
           ref: ${{ needs.plan.outputs.baseline }}
           role: baseline
-          artifact_suffix: ${{ needs.plan.outputs.artifact_key }}
-
-  q-duo-hil:
-    name: Q Duo · ${{ matrix.label }}
-    needs: [plan, emulator-checks, q-duo-firmware, q-duo-baseline]
-    if: >-
-      ${{ !cancelled() && needs.plan.result == 'success' && needs.emulator-checks.result == 'success' && needs.q-duo-firmware.result == 'success' &&
-          (needs.q-duo-baseline.result == 'success' || needs.q-duo-baseline.result == 'skipped') }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-      - uses: actions/download-artifact@v7
-        with:
-          name: q-duo-candidate-${{ needs.plan.outputs.artifact_key }}
-          path: ${{ runner.temp }}/q-duo-candidate
-      - uses: actions/download-artifact@v7
-        if: ${{ matrix.compare && needs.q-duo-baseline.result == 'success' }}
-        with:
-          name: q-duo-baseline-${{ needs.plan.outputs.artifact_key }}
-          path: ${{ runner.temp }}/q-duo-baseline
       - name: Install the pinned Linux runtime
-        run: |
-          sudo apt-get install -y lsof pkg-config libslirp-dev libglib2.0-dev
-          python -B -m scripts.native_spi.cosim_build
-      - name: Run selected Q Duo firmware tests
+        run: python -B -m scripts.native_spi.cosim_build
+      - name: Run the selected tests once, sequentially
         shell: bash
         env:
-          PROFILE: ${{ matrix.profile }}
-          COMPARE: ${{ matrix.compare }}
+          PROFILES: ${{ needs.plan.outputs.profiles }}
           CANDIDATE_SHA: ${{ needs.plan.outputs.candidate }}
           BASELINE_SHA: ${{ needs.plan.outputs.baseline }}
+          CANDIDATE_DIR: ${{ steps.firmware.outputs.firmware_directory }}
+          BASELINE_DIR: ${{ steps.baseline.outputs.firmware_directory }}
+          LAB_DIR: ${{ steps.firmware.outputs.lab_directory }}
+          HTTPS_FIXTURE: ${{ steps.firmware.outputs.https_fixture }}
         run: |
+          set -euo pipefail
           output="$RUNNER_TEMP/virtual-hil-report"
           mkdir -p "$output"
-          candidate="$RUNNER_TEMP/q-duo-candidate"
           verify_firmware() {
             local folder="$1" revision="$2" role="$3"
             (
               cd "$folder"
               test "$(jq -er '.revision' source.json)" = "$revision"
-              shasum -a 256 -c firmware.sha256
+              sha256sum -c firmware.sha256
             )
             cp "$folder/source.json" "$output/source-$role.json"
             cp "$folder/firmware.sha256" "$output/firmware-$role.sha256"
-            printf '%s SHA-256: %s\n' "$role" "$(cut -d ' ' -f 1 "$folder/firmware.sha256")"
           }
-          verify_firmware "$candidate" "$CANDIDATE_SHA" candidate
-          baseline_args=()
-          if [[ "$COMPARE" == true ]]; then
-            baseline="$candidate"
-            if [[ "$BASELINE_SHA" != "$CANDIDATE_SHA" ]]; then
-              baseline="$RUNNER_TEMP/q-duo-baseline"
-            fi
+          verify_firmware "$CANDIDATE_DIR" "$CANDIDATE_SHA" candidate
+          args=()
+          if [[ -n "$BASELINE_SHA" ]]; then
+            baseline="$CANDIDATE_DIR"
+            if [[ "$BASELINE_SHA" != "$CANDIDATE_SHA" ]]; then baseline="$BASELINE_DIR"; fi
             verify_firmware "$baseline" "$BASELINE_SHA" baseline
-            test "$(jq -r '.esphome' "$candidate/source.json")" = "$(jq -r '.esphome' "$baseline/source.json")" ||
-              { echo "De ESPHome-versies van baseline en kandidaat verschillen."; exit 1; }
-            baseline_args=(--baseline-firmware "$baseline/firmware.factory.bin")
+            test "$(jq -r '.esphome' "$CANDIDATE_DIR/source.json")" = "$(jq -r '.esphome' "$baseline/source.json")"
+            args+=(--baseline-firmware "$baseline/firmware.factory.bin")
           fi
-          python -B -m scripts.native_spi.pr_suite --profile "$PROFILE" --backend cosim \
-            --firmware "$candidate/firmware.factory.bin" --output "$output" "${baseline_args[@]}"
+          if [[ -n "$LAB_DIR" ]]; then
+            verify_firmware "$LAB_DIR" "$CANDIDATE_SHA" lab
+            test "$(jq -r '.test_only' "$LAB_DIR/source.json")" = true
+            test "$(jq -r '.profile' "$LAB_DIR/source.json")" = gpio_opentherm_https_lab
+            cp "$LAB_DIR/recipe.json" "$output/lab-recipe.json"
+            args+=(--lab-firmware "$LAB_DIR/firmware.factory.bin" --https-fixture "$HTTPS_FIXTURE")
+          fi
+          sudo unshare --net bash -c 'ip link set dev lo up && exec "$@"' _ \
+            /usr/bin/python3 -B -m scripts.native_spi.pr_suite --profile "$PROFILES" --backend cosim \
+            --firmware "$CANDIDATE_DIR/firmware.factory.bin" --output "$output" "${args[@]}"
       - name: Publish the suite summary
         if: always()
         shell: bash
         run: |
           summary="$RUNNER_TEMP/virtual-hil-report/summary.md"
-          if [[ -f "$summary" ]]; then
-            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          if [[ -f "$summary" ]]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: virtual-hil-report-${{ needs.plan.outputs.artifact_key }}-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}
+          name: virtual-hil-report-${{ needs.plan.outputs.artifact_key }}-${{ runner.os }}-${{ runner.arch }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/virtual-hil-report/
           if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}
         with:
-          name: virtual-hil-pr-result-${{ needs.plan.outputs.artifact_key }}-${{ matrix.profile }}-${{ github.run_attempt }}
+          name: virtual-hil-pr-result-${{ needs.plan.outputs.artifact_key }}-suite-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/virtual-hil-report/pr-result.json
             ${{ runner.temp }}/virtual-hil-report/source-candidate.json

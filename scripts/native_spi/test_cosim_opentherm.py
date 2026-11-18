@@ -2,12 +2,14 @@ from contextlib import contextmanager
 import gzip
 import random
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from .cosim import fields as bus_fields, registration
+from .cosim import CosimPeer, fields as bus_fields, message, registration, uint
+from .transport import RtuPeer, frame
 from .cosim_opentherm import HALF_NS, SECOND, OpenTherm, Outgoing, fields, waveform, word
 from .dynamics import wire_evidence
 from .qualification import qualify
@@ -24,6 +26,24 @@ class PortableOpenThermTests(unittest.TestCase):
         claim = bus_fields(bus_fields(payload[3])[1])
         self.assertEqual(claim[1], (1 << 9) | (1 << 21) | (1 << 47))
         self.assertEqual(claim[2], (1 << 5) | (1 << 14) | (1 << 48))
+
+    def test_modbus_claim_and_fragmented_uart_reply(self):
+        claim = bus_fields(bus_fields(bus_fields(registration(modbus=True))[4])[3])
+        self.assertEqual(bus_fields(claim[4]), {1: 40, 2: 42})
+        fleet = Mock(now_ms=0, lock=threading.RLock(), online=[True, True],
+                     profiles=["V2", "V2"])
+        fleet.read.return_value = 0x1234
+        cosim = SimpleNamespace(clock_ms=0, modbus=None, registered=True, uart_tx=0,
+                                uart_replies=0, send=Mock())
+        cosim.modbus = RtuPeer(fleet, lambda: cosim.clock_ms)
+        request = frame(bytes([1, 3, 8, 54, 0, 1]))
+        for at, chunk in ((50_000_000, request[:3]), (51_000_000, request[3:])):
+            CosimPeer.observe(cosim, {1: at, 10: uint(1, 1) + message(2, chunk)})
+        reply = frame(bytes([1, 3, 2, 0x12, 0x34]))
+        cosim.send.assert_called_once_with(uint(1, 51_000_000) + message(11, message(1, reply)))
+        self.assertEqual(cosim.uart_replies, 1)
+        with self.assertRaisesRegex(ValueError, "Onverwacht Modbus-frame"):
+            CosimPeer.observe(cosim, {1: 90_000_000, 10: uint(1, 2) + message(2, request)})
 
     def test_complete_valid_frames_and_bad_parity(self):
         for kind in (0, 1, 4, 5, 7):
@@ -184,14 +204,47 @@ class ScenarioLoadTests(unittest.TestCase):
         self.assertTrue(all(load.finalize({"recovered": (0, 30000)})["checks"].values()))
         self.assertFalse(load.finalize({"recovered": (-20000, 30000)})["checks"]["recovered"])
 
-    def test_early_sse_eof_is_reported(self):
-        load = ScenarioLoad(12345, lambda: 0, time.monotonic() + 10)
-        response = Mock(status=200)
-        response.readline.return_value = b""
-        with patch("scripts.native_spi.scenario_load.bounded_response") as opened:
-            opened.return_value.__enter__.return_value = response
+    def test_silent_sse_reconnects_and_records_the_failed_session(self):
+        load = ScenarioLoad(12345, lambda: 0, 100)
+        now = 0
+        calls = 0
+
+        def read_line(_):
+            nonlocal now
+            now += 4.1
+            self.assertTrue(cancelled())
+            raise ConnectionAbortedError("HTTP request cancelled")
+
+        @contextmanager
+        def open_stream(port, path, deadline, cancelled_, **kwargs):
+            nonlocal calls, cancelled
+            calls += 1
+            cancelled = cancelled_
+            self.assertEqual(path, "/events")
+            if calls == 1:
+                yield Mock(status=200, readline=read_line)
+            else:
+                load.stop.set()
+                yield Mock(status=200, readline=Mock(side_effect=[b"data: x", b""]))
+
+        cancelled = None
+        with patch("scripts.native_spi.scenario_load.bounded_response", open_stream), patch(
+                "scripts.native_spi.scenario_load.time.monotonic", side_effect=lambda: now):
             load.sse()
-        self.assertIn("ended before", load.result["sse_error"])
+        first, second = load.result["sse_sessions"]
+        self.assertEqual(first["error"], "SSE idle timeout")
+        self.assertEqual(second["end_index"], 1)
+
+    def test_overlap_cannot_cross_sse_reconnect_and_tail_stall_fails(self):
+        load = ScenarioLoad(12345, lambda: 0, 100)
+        load.result.update(clients_stopped=True, sse_events=6, sse_times_ms=[0, 5, 10, 15, 20, 25],
+                           sse_sessions=[{"begin_index": 0}, {"begin_index": 3}])
+        load.result["gets"] = [{"ok": True, "begin_ms": start, "end_ms": end}
+                              for start, end in ((1, 4), (11, 14), (16, 19))]
+        checks = load.finalize({"recovered": (0, 25)}, end_ms=12026)["checks"]
+        self.assertEqual([row["sse_overlap"] for row in load.result["gets"]], [True, False, True])
+        self.assertTrue(checks["recovered"])
+        self.assertFalse(checks["sse_continuous"])
 
     def test_https_requires_real_downloads_within_the_tls_interval(self):
         scenario = HttpsScenario(Mock(identity={}, snapshot=lambda: []), lambda: 0, 0, time.monotonic() + 1)
