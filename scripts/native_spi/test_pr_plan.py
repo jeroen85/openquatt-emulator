@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 import unittest
 
-from .pr_plan import LINUX_RUNNERS, PROFILE_LABELS, event_selection, workflow_plan
+from .pr_plan import LINUX_RUNNERS, PROFILE_LABELS, event_candidate_ref, event_selection, workflow_plan
 from .pr_profiles import COSIM_PROFILES, HIL_LABELS, HOSTED_CASES, selected_cases
 
 
@@ -39,6 +39,24 @@ class WorkflowPlanTest(unittest.TestCase):
             self.assertEqual(workflow_plan(profile, "x64", "a"*40)["lab"], "false")
         for profile in ("https", "regeling", "stooklijn"):
             self.assertEqual(workflow_plan(profile, "x64", "a"*40)["lab"], "true")
+
+    def test_pr_source_pin_requires_one_full_sha(self):
+        def event(*labels):
+            return {"pull_request": {"labels": [{"name": label} for label in labels]}}
+
+        self.assertEqual(event_candidate_ref(event("hil:regeling-kern")), "dev")
+        self.assertEqual(event_candidate_ref(event("hil:ref:" + "a" * 40)), "a" * 40)
+        for labels in (("hil:ref:dev",), ("hil:ref:" + "a" * 40, "hil:ref:" + "b" * 40)):
+            with self.subTest(labels=labels), self.assertRaises(ValueError):
+                event_candidate_ref(event(*labels))
+
+    def test_regulation_retry_selects_only_two_cases_and_the_lab_build(self):
+        event = {"pull_request": {"labels": [{"name": "hil:regeling-kern"}]}}
+        selection = event_selection(event)
+        self.assertEqual(selected_cases(selection, "cosim"), ("power-house", "stooklijn"))
+        self.assertEqual(workflow_plan(selection, "x64", "a" * 40)["lab"], "true")
+        with self.assertRaisesRegex(ValueError, "geheugenreferentie"):
+            workflow_plan(selection, "x64", "a" * 40, "b" * 40)
 
     def test_local_or_invalid_profiles_never_generate_hosted_jobs(self):
         for selection in ("", "basis,", "alles", "energie", "modbus", "basis,modbus",

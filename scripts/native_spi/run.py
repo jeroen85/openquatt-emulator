@@ -269,7 +269,9 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
     gpio_ot = backend == "cosim" and scenario in ("power-house", "heating-curve", "lowflow", "dynamics")
     if gpio_ot and info["project"] != "openquatt-ot-lab":
         raise ValueError("Ubuntu OpenTherm-scenario's vereisen de Q Duo GPIO-labbin")
-    ports = {"http": base, "uart1": base + 2}
+    ports = {"http": base}
+    if not uses_cosim_modbus(backend, scenario):
+        ports["uart1"] = base + 2
     if backend == "cosim":
         ports["cosim"] = base + 3
     if network != "wifi":
@@ -293,6 +295,10 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
                          export_seed=export_seed, dew_case=dew_case, energy_case=energy_case, backend=backend, ntp_epoch=ntp_epoch)
 
 
+def uses_cosim_modbus(backend, scenario):
+    return backend == "cosim" and scenario in ("power-house", "heating-curve")
+
+
 def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
               memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None, power_house_climate=None,
               assist_case=None, handover_variant=None, restart_case=None, ota_image=None,
@@ -308,6 +314,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     probe = NetworkProbe(network, ports, cable)
 
     use_cosim = backend == "cosim"
+    cosim_modbus = uses_cosim_modbus(backend, scenario)
     if use_cosim:
         executable, odu_library, native_build = ensure_cosim()
         extension = None
@@ -332,8 +339,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         report["backend"] = backend
     if ntp_epoch is not None:
         report["ntp_fixture"] = {"epoch": ntp_epoch}
-    if scenario == "odu-link-loss":
+    if cosim_modbus or scenario == "odu-link-loss":
         report["modbus_timing_events"] = []
+    if scenario == "odu-link-loss":
         report["modbus_link_events"] = []
     if memory_export or scenario not in ("compatibility", "dynamics", "pr-memory"):
         report["source_snapshot"] = "scenario-source"
@@ -358,10 +366,12 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     command = [
         str(executable), "--chip", "esp32s3", "--firmware", str(flash), "--psram-size", "8M",
         "--wifi-ssid", "OpenQuatt-Native-Probe", "--wifi-password", "native-probe-only",
-        "--wifi-fw-ap-password", "openquatt", "--uart1-tcp", f"127.0.0.1:{ports['uart1']}",
+        "--wifi-fw-ap-password", "openquatt",
         "--net", f"user,restrict=yes,hostfwd=tcp:127.0.0.1:{ports['http']}-:80",
         "--timeout", f"{seconds + 15}s", "--log-color", "never",
     ]
+    if not cosim_modbus:
+        command.extend(("--uart1-tcp", f"127.0.0.1:{ports['uart1']}"))
     if use_cosim:
         command.extend(("--cosim-tcp", f"127.0.0.1:{ports['cosim']}"))
     if restart_case or energy_case:
@@ -480,7 +490,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                     with report_lock:
                         if "Stop waiting for response" in line or "Received unexpected frame" in line:
                             report["modbus_timing_warnings"].append(line.strip())
-                            if scenario == "odu-link-loss":
+                            if "modbus_timing_events" in report:
                                 report["modbus_timing_events"].append({"line": line.strip(), "guest_ms": guest_clock()})
                         if scenario == "odu-link-loss" and ("HP2 - Modbus OFFLINE" in line or "HP2 - Modbus ONLINE" in line):
                             report["modbus_link_events"].append({"line": line.strip(), "guest_ms": guest_clock()})
@@ -696,7 +706,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             ethernet = (ports["ethernet"], cable, trace, tls.epoch if tls else ntp_epoch or 0) if network != "wifi" else None
             ot = OpenTherm(thermostat) if dynamics and not restart_case else None
             cosim = CosimPeer(odu_library, temperature, ethernet=ethernet, opentherm=ot,
-                              tls_port=tls.port if tls else 0)
+                              tls_port=tls.port if tls else 0, modbus=peer if cosim_modbus else None)
         process = subprocess.Popen(
             command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, errors="replace",
@@ -712,7 +722,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         if not _cancel_requested:
             if cosim:
                 cosim.start(ports["cosim"])
-            peer.start(ports["uart1"])
+            if not cosim_modbus:
+                peer.start(ports["uart1"])
         next_http = next_live = 0
         functional_complete_since = None
         while process.poll() is None and time.monotonic() < deadline and not stop.is_set() and not _cancel_requested:
@@ -788,13 +799,14 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 "hardware_profile": f"esp32s3-8M-psram-q-duo-{backend}",
             }
         if scenario_load:
+            workload_end_ms = guest_clock()
             scenario_load.close()
             if scenario == "lowflow":
                 windows = (lowflow_windows(dynamics.result)
                            if dynamics.result["stage"] == "complete" else None)
             else:
                 windows = regulation_windows(scenario, dynamics.result)
-            report["scenario_load"] = scenario_load.finalize(windows)
+            report["scenario_load"] = scenario_load.finalize(windows, workload_end_ms)
         peer.stop.set()
         if cosim:
             cosim.stopping.set()
@@ -830,7 +842,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             peer.close()
         except Exception as exc:
             error("UART cleanup", exc)
-        peer_stopped = peer.thread is None or not peer.thread.is_alive()
+        peer_thread = cosim.thread if cosim_modbus and cosim else peer.thread
+        peer_stopped = peer_thread is None or not peer_thread.is_alive()
         if peer_stopped:
             try:
                 report["model"] = fleet.snapshot()
@@ -847,6 +860,8 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             except Exception as exc:
                 error("outside-unit cleanup", exc)
             report["peer"] = peer.snapshot()
+            if cosim_modbus:
+                report["peer"]["transport"] = "cosim-uart"
             report["writes"] = peer.write_history()
         else:
             report["peer"] = {

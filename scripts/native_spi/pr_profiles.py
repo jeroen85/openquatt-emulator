@@ -18,7 +18,7 @@ CASES = {
 NETWORK_CASES = ("ethernet-ntp", "ethernet-failover")
 LAB_CASES = frozenset(("power-house", "lowflow", "stooklijn", "https"))
 COSIM_SECONDS = {"power-house": 3300, "lowflow": 1100, "stooklijn": 3000, "https": 420}
-COSIM_PROFILES = ("basis", "herstart", "netwerk", "https", "regeling", "stooklijn", "uitgebreid")
+COSIM_PROFILES = ("basis", "herstart", "netwerk", "https", "regeling", "stooklijn", "regeling-kern", "uitgebreid")
 HOSTED_CASES = (BASE, "herstart", *NETWORK_CASES, "https", "power-house", "lowflow", "stooklijn")
 PROFILES = {
     "basis": (BASE,),
@@ -28,6 +28,7 @@ PROFILES = {
     "regeling": (BASE, "power-house", "lowflow"),
     "https": (BASE, "https"),
     "stooklijn": (BASE, "stooklijn"),
+    "regeling-kern": ("power-house", "stooklijn"),
     "alles": (BASE, "herstart", "modbus", "energie-uur", "energie-dag", "power-house", "lowflow"),
     "netwerk": (BASE, *NETWORK_CASES),
     "uitgebreid": HOSTED_CASES,
@@ -35,6 +36,7 @@ PROFILES = {
 PROFILE_LABELS = {"basis": "rooktest en geheugen", "herstart": "softwareherstart",
                   "netwerk": "Ethernet en Wi-Fi-terugval", "https": "HTTPS en herstel",
                   "regeling": "Power House en lowflowherstel", "stooklijn": "stooklijn",
+                  "regeling-kern": "Power House en stooklijn",
                   "uitgebreid": "alle Ubuntu-proeven"}
 HIL_LABELS = {"hil:" + name: name for name in COSIM_PROFILES}
 
@@ -43,8 +45,9 @@ def selected_profiles(selection, backend="cosim"):
     if backend not in ("cosim", "native"):
         raise ValueError("Onbekende backend")
     selected = {part.strip() for part in selection.split(",")}
-    allowed = set(COSIM_PROFILES) if backend == "cosim" else set(PROFILES) - {"netwerk", "uitgebreid", "https", "stooklijn"}
-    if backend == "native" and selected & {"netwerk", "uitgebreid", "https", "stooklijn"}:
+    cosim_only = {"netwerk", "uitgebreid", "https", "stooklijn", "regeling-kern"}
+    allowed = set(COSIM_PROFILES) if backend == "cosim" else set(PROFILES) - cosim_only
+    if backend == "native" and selected & cosim_only:
         raise ValueError("Kies --backend cosim voor dit profiel.")
     if not selected or not selected <= allowed:
         raise ValueError("Ongeldige profielen voor deze backend; overige lokale proeven vereisen macOS.")

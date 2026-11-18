@@ -103,6 +103,8 @@ def run_suite(profile, firmware, backend, port_base, output, baseline=None, *, l
     output.mkdir(parents=True, exist_ok=True)
     results = {}
     comparison = ()
+    if baseline is not None and BASE not in cases:
+        raise ValueError("Kies basis bij een geheugenreferentie.")
     if baseline is not None and not stop_requested:
         key = "geheugen-baseline"
         results[key] = run_case(key, baseline, backend, port_base, output / key)

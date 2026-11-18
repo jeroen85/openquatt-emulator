@@ -150,6 +150,12 @@ onder `qualification`.
   tijdvenster op de gastklok verstreken is tellen mee in `dynamics.wire`.
 - `https` bevat de TLS-pogingen, manifestrevisies, downloads en herstelchecks.
 - `memory.phases` bevat meetdekking en geheugenwaarden per venster.
+- Power House en stooklijn gebruiken UART rechtstreeks via het co-simulatieprotocol op de
+  Q Duo-pinnen GPIO40 (TX) en GPIO42 (RX). De runner houdt de Modbus-timingcontrole
+  van de firmware aan. De overige scenario’s gebruiken de afzonderlijke UART1-TCP-brug.
+- Bij vier seconden zonder SSE-event opent de runner opnieuw een stream. Een
+  eventgat boven 12 gastseconden geeft ook na herstel afkeur. Een download telt
+  alleen als overlappend als één stream hem volledig omsluit.
 - `scenario_load` bevat de SSE-/webbelasting van de regelproeven en de
   overlapcontroles per meetvenster.
 

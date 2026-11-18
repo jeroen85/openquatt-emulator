@@ -7,8 +7,9 @@ import math
 import os
 from pathlib import Path
 import re
+import sys
 
-from .pr_profiles import (COSIM_PROFILES, COSIM_SECONDS, HIL_LABELS, LAB_CASES, PROFILE_LABELS,
+from .pr_profiles import (BASE, COSIM_PROFILES, COSIM_SECONDS, HIL_LABELS, LAB_CASES, PROFILE_LABELS,
                           selected_cases, selected_profiles)
 
 LINUX_RUNNERS = {"x64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
@@ -27,6 +28,8 @@ def workflow_plan(selection, architecture, candidate, baseline=None):
     seconds = sum(COSIM_SECONDS.get(key, {"geheugen": 285, "herstart": 340,
                   "ethernet-ntp": 90, "ethernet-failover": 180}.get(key, 0)) for key in cases)
     if baseline:
+        if BASE not in cases:
+            raise ValueError("Kies basis bij een geheugenreferentie.")
         seconds += 285
     # Include provisioning, builds and teardown. Test timers are never shortened.
     timeout = math.ceil(seconds / 60) + 35 + (25 if lab else 0) + (25 if baseline and baseline != candidate else 0)
@@ -44,11 +47,24 @@ def event_selection(event):
     return ",".join(selected) or "basis"
 
 
+def event_candidate_ref(event):
+    refs = {row["name"].removeprefix("hil:ref:") for row in event.get("pull_request", {}).get("labels", [])
+            if row["name"].startswith("hil:ref:")}
+    if not refs:
+        return "dev"
+    if len(refs) != 1 or not re.fullmatch(r"[0-9a-f]{40}", ref := next(iter(refs))):
+        raise ValueError("Gebruik één hil:ref:<volledige OpenQuatt-commit-SHA>.")
+    return ref
+
+
 if __name__ == "__main__":
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-    selection = os.environ.get("PROFILES") or event_selection(event)
-    result = workflow_plan(selection, os.environ["ARCHITECTURE"],
-                           os.environ["CANDIDATE_SHA"], os.environ["BASELINE_SHA"])
+    if sys.argv[1:] == ["--source-ref"]:
+        result = {"ref": event_candidate_ref(event)}
+    else:
+        selection = os.environ.get("PROFILES") or event_selection(event)
+        result = workflow_plan(selection, os.environ["ARCHITECTURE"],
+                               os.environ["CANDIDATE_SHA"], os.environ["BASELINE_SHA"])
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         for key, value in result.items():
             print(f"{key}={value}", file=output)
