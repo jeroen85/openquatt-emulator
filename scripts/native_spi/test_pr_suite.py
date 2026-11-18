@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from .memory_comparison import METRICS
-from .pr_suite import BASE, run_case, run_suite, select_cases, wait_for_case
+from .pr_suite import BASE, memory_summary, run_case, run_suite, select_cases, wait_for_case
 from .pr_profiles import HOSTED_CASES, LAB_CASES
 
 
@@ -44,6 +44,20 @@ class PrSuiteTest(unittest.TestCase):
             self.assertIn("Q Duo-rooktest geslaagd", summary)
             self.assertEqual(json.loads((root / "pr-result.json").read_text()),
                              {"schema": 2, "profiles": ["basis"], "cases": {"geheugen-baseline": False, BASE: True}, "firmware": {}})
+
+    def test_memory_summary_uses_load_and_qualified_reference_only(self):
+        phase = {"covered": True, **dict(zip(METRICS, (73000, 42000, 52000)))}
+        report = {"memory": {"complete": True, "phases": {"before": {}, "load": phase}}}
+        results = {BASE: {"passed": True, "report": report}, "geheugen-baseline": {"passed": True}}
+        self.assertEqual(memory_summary(results), {BASE: [73000, 42000, 52000]})
+        metrics = {name: {"reference_b": value + 5} for name, value in zip(METRICS, (73000, 42000, 52000))}
+        report["pr_memory"] = {"assessment": {"status": "measured", "phases": {"load": {"metrics": metrics}}}}
+        self.assertEqual(memory_summary(results), {BASE: [73000, 42000, 52000],
+                                                   "geheugen-baseline": [73005, 42005, 52005]})
+        report["pr_memory"]["assessment"]["status"] = "uncomparable"
+        self.assertEqual(memory_summary(results), {BASE: [73000, 42000, 52000]})
+        report["memory"]["complete"] = False
+        self.assertEqual(memory_summary(results), {})
 
     def test_stop_gives_the_owned_runner_time_to_write_report(self):
         child = Mock()
