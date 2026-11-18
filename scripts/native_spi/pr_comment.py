@@ -122,6 +122,24 @@ def latest_for_pr(api, run, pr, repository_id):
                key=version, default=None)
 
 
+# Only these suites export the three internal-memory measurements.
+MEMORY_CASES = {"geheugen", "https", "power-house", "lowflow", "stooklijn"}
+REFERENCE_CASE = "geheugen-baseline"
+
+
+def parse_memory(memory, cases):
+    if not isinstance(memory, dict) or memory.keys() - (MEMORY_CASES | {REFERENCE_CASE}):
+        raise ValueError("Ongeldige geheugenproeven")
+    for key, values in memory.items():
+        if (cases.get(key) is not True or not isinstance(values, list) or len(values) != 3
+                or any(type(n) is not int or not 0 <= n <= 8 * 1024 * 1024 for n in values)
+                or max(values[1:]) > values[0]):
+            raise ValueError("Ongeldige geheugencijfers")
+    if REFERENCE_CASE in memory and "geheugen" not in memory:
+        raise ValueError("Geheugenvergelijking mist de kandidaatmeting")
+    return memory
+
+
 def parse_result(payload, expected_profile):
     if len(payload) > LIMIT:
         raise ValueError("Resultaatarchief is te groot")
@@ -176,7 +194,8 @@ def parse_result(payload, expected_profile):
     for role in ("candidate", "lab"):
         if len({item["sha256"] for item in firmware.values() if item["role"] == role}) > 1:
             raise ValueError("De proeven hebben geen gedeelde firmware per rol")
-    return {"revision": revision, "profiles": profiles, "cases": cases, "firmware": firmware}
+    memory = parse_memory(result.get("memory", {}), cases) if schema == 2 else {}
+    return {"revision": revision, "profiles": profiles, "cases": cases, "firmware": firmware, "memory": memory}
 
 
 def details(api, run):
@@ -212,6 +231,29 @@ def render(run, repository, server, profiles):
                 lines.append(f"| {selection} | {LABELS[key]} | {'Geslaagd' if passed else 'Afgekeurd'} |")
                 if identity := data["firmware"].get(key):
                     identities.setdefault((identity["role"], identity["sha256"]), []).append(LABELS[key])
+        memory_rows = []
+        comparison_missing = False
+        for _, data in sorted(profiles.items()):
+            memory = data["memory"]
+            baseline = memory.get(REFERENCE_CASE)
+            for key, values in memory.items():
+                if key == REFERENCE_CASE:
+                    continue
+                title = "Webbelasting" if key == "geheugen" else LABELS[key]
+                cells = [str(value) for value in values]
+                if key == "geheugen" and baseline is not None:
+                    cells = [f"{value} ({value - ref:+d})" for value, ref in zip(values, baseline)]
+                memory_rows.append(f"| {title} | {' | '.join(cells)} |")
+            comparison_missing |= REFERENCE_CASE in data["cases"] and baseline is None
+        if memory_rows:
+            lines += ["", "**Intern geheugen (B)**",
+                      "Webbelasting toont het belastingsvenster. Andere proeven tonen het minimum over de gemeten fasen."]
+            if any(REFERENCE_CASE in data["memory"] for data in profiles.values()):
+                lines.append("Tussen haakjes staat kandidaat minus baseline.")
+            lines += ["", "| Proef | Vrije heap (min.) | Heapmin sinds boot | Grootste vrije blok (min.) |",
+                      "| --- | ---: | ---: | ---: |", *memory_rows]
+        if comparison_missing:
+            lines += ["", "Geen geldige vergelijking met de geheugenbaseline."]
         revisions = ", ".join(f"`{rev[:8]}`" for rev in sorted({data["revision"] for data in profiles.values()}))
         lines += ["", f"OpenQuatt-firmware volgens de run {revisions}."]
         if identities:

@@ -194,6 +194,29 @@ class SharedSuiteCommentTest(unittest.TestCase):
         self.assertIn("d"*64, text)
         self.assertIn("GPIO/test-CA-labbin", text)
 
+    def test_comment_formats_heap_values_and_signed_differences(self):
+        def measured(result):
+            result["cases"]["geheugen-baseline"] = True
+            result["firmware"]["geheugen-baseline"] = {"role": "baseline", "sha256": "e" * 64}
+            result["memory"] = {"geheugen": [98100, 62000, 71000], "geheugen-baseline": [98000, 62500, 71000],
+                                "https": [96000, 60000, 70000]}
+        api = FakeGitHub()
+        api.artifacts = [artifact(10, "suite")]
+        api.downloads[10] = self.suite_bundle(mutate=measured)
+        self.assertTrue(publish(event(), REPO, SERVER, api))
+        text = api.writes[0][2]
+        self.assertIn("| Webbelasting | 98100 (+100) | 62000 (-500) | 71000 (+0) |", text)
+        self.assertIn("| HTTPS, afgebroken verbinding en herstel onder webbelasting | 96000 | 60000 | 70000 |", text)
+
+    def test_rejects_invalid_or_unpaired_memory_evidence(self):
+        for memory in (
+            {"geheugen": ["@reviewer", 0, 0]}, {"geheugen": [20, True, 0]},
+            {"geheugen": [20, 0, 21]}, {"geheugen": [2**24, 0, 0]},
+            {"geheugen-baseline": [20, 0, 0]}, {"@reviewer": [20, 0, 0]},
+        ):
+            with self.subTest(memory=memory), self.assertRaises(ValueError):
+                parse_result(self.suite_bundle(mutate=lambda r: r.update(memory=memory)), "suite")
+
     def test_unknown_selection_missing_cases_or_firmware_never_publish_details(self):
         mutations = (
             lambda r: r.update(profiles=["https", "@reviewer"]),
