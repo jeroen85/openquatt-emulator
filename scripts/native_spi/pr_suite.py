@@ -93,6 +93,31 @@ def run_case(key, firmware, backend, port_base, folder, extra=()):
             "report": report}
 
 
+def memory_summary(results):
+    summary = {}
+    for key in (BASE, "https", "power-house", "lowflow", "stooklijn"):
+        result = results.get(key)
+        if not result or not result["passed"]:
+            continue
+        report = result["report"]
+        memory = report.get("memory", {})
+        phases = memory.get("phases", {})
+        rows = [phases.get("load", {})] if key == BASE else list(phases.values())
+        if (memory.get("complete") is not True or not rows
+                or any(row.get("covered") is not True or any(type(row.get(metric)) is not int
+                       for metric in METRICS) for row in rows)):
+            continue
+        summary[key] = [min(row[metric] for row in rows) for metric in METRICS]
+        if key == BASE and results.get("geheugen-baseline", {}).get("passed"):
+            assessment = report.get("pr_memory", {}).get("assessment", {})
+            if assessment.get("status") in ("measured", "no_signal", "repeat"):
+                comparison = assessment.get("phases", {}).get("load", {}).get("metrics", {})
+                references = [comparison.get(metric, {}).get("reference_b") for metric in METRICS]
+                if all(type(value) is int for value in references):
+                    summary["geheugen-baseline"] = references
+    return summary
+
+
 def run_suite(profile, firmware, backend, port_base, output, baseline=None, *, lab_firmware=None, https_fixture=None):
     cases = select_cases(profile, backend)
     profiles = selected_profiles(profile, backend)
@@ -168,9 +193,10 @@ def run_suite(profile, firmware, backend, port_base, output, baseline=None, *, l
         if digest:
             role = "lab" if backend == "cosim" and key in LAB_CASES else "candidate"
             identities[key] = {"role": "baseline" if key == "geheugen-baseline" else role, "sha256": digest}
-    (output / "pr-result.json").write_text(json.dumps({
-        "schema": 2, "profiles": profiles, "cases": case_status, "firmware": identities,
-    }))
+    payload = {"schema": 2, "profiles": profiles, "cases": case_status, "firmware": identities}
+    if memory := memory_summary(results):
+        payload["memory"] = memory
+    (output / "pr-result.json").write_text(json.dumps(payload))
     if stop_requested:
         return 130
     return 0 if all(result["passed"] for result in results.values()) else 1

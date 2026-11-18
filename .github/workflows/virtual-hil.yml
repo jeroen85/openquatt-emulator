@@ -77,7 +77,6 @@ jobs:
           persist-credentials: false
       - name: Resolve the requested OpenQuatt source
         id: source
-        if: ${{ inputs.openquatt_ref == '' }}
         run: python3 -B -m scripts.native_spi.pr_plan --source-ref
       - uses: actions/checkout@v6
         with:
@@ -86,10 +85,10 @@ jobs:
           path: plan-candidate
           persist-credentials: false
       - uses: actions/checkout@v6
-        if: ${{ inputs.baseline_ref != '' }}
+        if: ${{ inputs.baseline_ref != '' || steps.source.outputs.baseline != '' }}
         with:
           repository: OpenQuatt/OpenQuatt
-          ref: ${{ inputs.baseline_ref }}
+          ref: ${{ inputs.baseline_ref || steps.source.outputs.baseline }}
           path: plan-baseline
           persist-credentials: false
       - name: Resolve revisions and select profiles

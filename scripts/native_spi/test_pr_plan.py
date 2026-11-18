@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 import unittest
 
-from .pr_plan import LINUX_RUNNERS, PROFILE_LABELS, event_candidate_ref, event_selection, workflow_plan
+from .pr_plan import LINUX_RUNNERS, PROFILE_LABELS, event_candidate_ref, event_selection, labeled_ref, workflow_plan
 from .pr_profiles import COSIM_PROFILES, HIL_LABELS, HOSTED_CASES, selected_cases
 
 
@@ -49,6 +49,16 @@ class WorkflowPlanTest(unittest.TestCase):
         for labels in (("hil:ref:dev",), ("hil:ref:" + "a" * 40, "hil:ref:" + "b" * 40)):
             with self.subTest(labels=labels), self.assertRaises(ValueError):
                 event_candidate_ref(event(*labels))
+
+    def test_baseline_pin_is_optional_and_independent_of_the_candidate(self):
+        event = {"pull_request": {"labels": [{"name": "hil:ref:" + "a" * 40},
+                                             {"name": "hil:base:" + "b" * 40}]}}
+        self.assertEqual(labeled_ref(event, "base"), "b" * 40)
+        self.assertEqual(event_candidate_ref(event), "a" * 40)
+        self.assertEqual(labeled_ref({}, "base"), "")
+        event["pull_request"]["labels"].append({"name": "hil:base:dev"})
+        with self.assertRaisesRegex(ValueError, "hil:base"):
+            labeled_ref(event, "base")
 
     def test_regulation_retry_selects_only_two_cases_and_the_lab_build(self):
         event = {"pull_request": {"labels": [{"name": "hil:regeling-kern"}]}}

@@ -47,20 +47,25 @@ def event_selection(event):
     return ",".join(selected) or "basis"
 
 
-def event_candidate_ref(event):
-    refs = {row["name"].removeprefix("hil:ref:") for row in event.get("pull_request", {}).get("labels", [])
-            if row["name"].startswith("hil:ref:")}
+def labeled_ref(event, kind, default=""):
+    prefix = f"hil:{kind}:"
+    refs = {row["name"].removeprefix(prefix) for row in event.get("pull_request", {}).get("labels", [])
+            if row["name"].startswith(prefix)}
     if not refs:
-        return "dev"
+        return default
     if len(refs) != 1 or not re.fullmatch(r"[0-9a-f]{40}", ref := next(iter(refs))):
-        raise ValueError("Gebruik één hil:ref:<volledige OpenQuatt-commit-SHA>.")
+        raise ValueError(f"Gebruik één {prefix}<volledige OpenQuatt-commit-SHA>.")
     return ref
+
+
+def event_candidate_ref(event):
+    return labeled_ref(event, "ref", "dev")
 
 
 if __name__ == "__main__":
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     if sys.argv[1:] == ["--source-ref"]:
-        result = {"ref": event_candidate_ref(event)}
+        result = {"ref": event_candidate_ref(event), "baseline": labeled_ref(event, "base")}
     else:
         selection = os.environ.get("PROFILES") or event_selection(event)
         result = workflow_plan(selection, os.environ["ARCHITECTURE"],
