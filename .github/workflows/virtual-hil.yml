@@ -194,8 +194,7 @@ jobs:
           if [[ -n "$LAB_DIR" ]]; then
             verify_firmware "$LAB_DIR" "$CANDIDATE_SHA" lab
             test "$(jq -r '.test_only' "$LAB_DIR/source.json")" = true
-            test "$(jq -r '.profile' "$LAB_DIR/source.json")" = gpio_opentherm_https_lab
-            cp "$LAB_DIR/recipe.json" "$output/lab-recipe.json"
+            test "$(jq -r '.profile' "$LAB_DIR/source.json")" = local_https_test_ca
             args+=(--lab-firmware "$LAB_DIR/firmware.factory.bin" --https-fixture "$HTTPS_FIXTURE")
           fi
           sudo unshare --net bash -c 'ip link set dev lo up && exec "$@"' _ \

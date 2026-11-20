@@ -122,7 +122,7 @@ def run_suite(profile, firmware, backend, port_base, output, baseline=None, *, l
     cases = select_cases(profile, backend)
     profiles = selected_profiles(profile, backend)
     if backend == "cosim" and set(cases) & LAB_CASES and lab_firmware is None:
-        raise ValueError("Deze Ubuntu-proeven vereisen --lab-firmware met de gezamenlijke GPIO/test-CA-build.")
+        raise ValueError("HTTPS vereist --lab-firmware met de lokale test-CA.")
     if "https" in cases and https_fixture is None:
         raise ValueError("HTTPS vereist --https-fixture met de bijbehorende lokale test-CA.")
     output.mkdir(parents=True, exist_ok=True)

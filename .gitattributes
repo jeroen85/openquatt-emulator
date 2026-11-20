@@ -1,3 +1,0 @@
-
-# Unified-diff context lines intentionally contain a space.
-scripts/native_spi/lab_firmware/*.patch whitespace=-blank-at-eol

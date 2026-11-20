@@ -173,7 +173,7 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
                                or scenario not in ("compatibility", "pr-memory", "restart", "https", "https-reject", "power-house", "heating-curve", "lowflow", "dynamics")
                                or memory_export is not None
                                or (scenario == "restart" and restart_case != "software")):
-        raise ValueError("Co-simulatie ondersteunt de Q Duo-rooktest, pr-memory, softwareherstart, HTTPS en de GPIO-labscenario's voor regeling")
+        raise ValueError("Co-simulatie ondersteunt de Q Duo-rooktest, pr-memory, softwareherstart, HTTPS en de regelproeven met OpenTherm")
     if scenario in ("mqtt-reconnect", "energy-boundary") and (network != "ethernet" or mode != "device"):
         raise ValueError("Deze proef vereist de lokale Ethernet-fixture in device-modus")
     if scenario == "mqtt-reconnect":
@@ -266,9 +266,6 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
     if backend == "cosim" and scenario in ("power-house", "heating-curve", "lowflow", "https"):
         measure_memory = True
     info = factory_info(firmware)
-    gpio_ot = backend == "cosim" and scenario in ("power-house", "heating-curve", "lowflow", "dynamics")
-    if gpio_ot and info["project"] != "openquatt-ot-lab":
-        raise ValueError("Ubuntu OpenTherm-scenario's vereisen de Q Duo GPIO-labbin")
     ports = {"http": base}
     if not uses_cosim_modbus(backend, scenario):
         ports["uart1"] = base + 2
@@ -377,7 +374,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     if restart_case or energy_case:
         command.extend(("--control-tcp", f"127.0.0.1:{ports['control']}", "--save-state"))
     atomic_json(out / "command.json", command)
-    env = dict(os.environ, RUST_LOG="warn")
+    env = dict(os.environ, RUST_LOG="warn", ESP_EMU_DISABLE_AUTOUPDATES="1")
     for key in ("OQ_NATIVE_GUEST_CLOCK", "OQ_NATIVE_OT_CONTROL", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD",
                 "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE",
                 "OQ_LOCAL_TLS_PORT", "OQ_LOCAL_EPOCH", "OQ_LOCAL_MQTT_PORT", "OQ_NATIVE_RTD_CONTROL",

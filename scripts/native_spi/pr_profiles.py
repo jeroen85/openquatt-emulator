@@ -16,7 +16,7 @@ CASES = {
                           "--seconds", "180"),
 }
 NETWORK_CASES = ("ethernet-ntp", "ethernet-failover")
-LAB_CASES = frozenset(("power-house", "lowflow", "stooklijn", "https"))
+LAB_CASES = frozenset({"https"})
 COSIM_SECONDS = {"power-house": 3300, "lowflow": 1100, "stooklijn": 3000, "https": 420}
 COSIM_PROFILES = ("basis", "herstart", "netwerk", "https", "regeling", "stooklijn", "regeling-kern", "uitgebreid")
 HOSTED_CASES = (BASE, "herstart", *NETWORK_CASES, "https", "power-house", "lowflow", "stooklijn")
