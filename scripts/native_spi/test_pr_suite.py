@@ -83,7 +83,7 @@ class PrSuiteTest(unittest.TestCase):
             ))
 
 
-    def test_multiple_profiles_use_one_base_and_one_shared_lab_firmware(self):
+    def test_only_https_uses_the_lab_firmware(self):
         memory = {"phases": {phase: dict.fromkeys(METRICS, 123) for phase in ("before", "load", "after")}}
         def result(key, firmware, *args):
             sha = "b"*64 if firmware.name == "lab.bin" else "a"*64
@@ -98,14 +98,16 @@ class PrSuiteTest(unittest.TestCase):
                 self.assertEqual(call.args[1], lab if call.args[0] in LAB_CASES else production)
                 if call.args[0] == "https": self.assertEqual(call.args[-1], ("--https-fixture", str(tls)))
             report = json.loads((root/"pr-result.json").read_text())
-            self.assertEqual(len({row["sha256"] for key,row in report["firmware"].items() if key in LAB_CASES}), 1)
+            for key, row in report["firmware"].items():
+                expected = {"role": "lab", "sha256": "b"*64} if key == "https" else {"role": "candidate", "sha256": "a"*64}
+                self.assertEqual(row, expected)
             self.assertEqual(report["cases"], dict.fromkeys(HOSTED_CASES, True))
 
     def test_missing_lab_or_tls_fails_before_starting_any_probe(self):
         with tempfile.TemporaryDirectory() as folder, patch("scripts.native_spi.pr_suite.run_case") as run:
             root = Path(folder)
             with self.assertRaisesRegex(ValueError, "lab-firmware"):
-                run_suite("regeling", root/"prod", "cosim", 19460, root)
+                run_suite("https", root/"prod", "cosim", 19460, root)
             with self.assertRaisesRegex(ValueError, "https-fixture"):
                 run_suite("https", root/"prod", "cosim", 19460, root, lab_firmware=root/"lab")
             run.assert_not_called()
@@ -120,8 +122,7 @@ class PrSuiteTest(unittest.TestCase):
                     "report": {"memory": memory}}
         with tempfile.TemporaryDirectory() as folder, patch("scripts.native_spi.pr_suite.run_case", side_effect=result):
             root=Path(folder)
-            self.assertEqual(run_suite("regeling", root/"prod.bin", "cosim", 19460, root,
-                                       lab_firmware=root/"lab.bin"), 1)
+            self.assertEqual(run_suite("regeling", root/"prod.bin", "cosim", 19460, root), 1)
             self.assertIn("Geen meting", (root/"summary.md").read_text())
             report=json.loads((root/"pr-result.json").read_text())
             self.assertTrue(report["cases"][BASE])

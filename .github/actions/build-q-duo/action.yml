@@ -1,5 +1,5 @@
 name: Build shared Q Duo firmware
-description: Build production once, optionally one shared GPIO and HTTPS lab image
+description: Build production once, optionally a separate HTTPS test image
 inputs:
   ref:
     description: Exact OpenQuatt source commit
@@ -8,7 +8,7 @@ inputs:
     description: candidate or baseline
     required: true
   lab:
-    description: Also build the shared GPIO and test-CA lab image
+    description: Also build the HTTPS firmware with a local test CA
     default: 'false'
 outputs:
   firmware_directory:
@@ -36,7 +36,7 @@ runs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-    - name: Build shared production and lab firmware
+    - name: Build Q Duo firmware and optional HTTPS test image
       id: build
       shell: bash
       working-directory: ${{ inputs.role }}
@@ -80,17 +80,16 @@ runs:
           fixture="$RUNNER_TEMP/virtual-hil-private-tls"
           (
             cd "$GITHUB_WORKSPACE"
-            python -B -m scripts.native_spi.firmware_lab --firmware-root "$source_root" --fixture "$fixture"
+            python -B -m scripts.native_spi.https_fixture --firmware-root "$source_root" --output "$fixture"
           )
           lab="$RUNNER_TEMP/q-duo-lab"
           build_one configs/heatpump_controller_q/.virtual-https.yaml \
-            .esphome/build/virtual_https/build "$lab" gpio_opentherm_https_lab true
+            .esphome/build/virtual_https/build "$lab" local_https_test_ca true
           (
             cd "$GITHUB_WORKSPACE"
             python -B -m scripts.native_spi.https_fixture --firmware-root "$source_root" \
               --output "$fixture" --bind-firmware "$lab/firmware.factory.bin"
           )
-          cp .virtual-hil/recipe.json "$lab/recipe.json"
           echo "lab_directory=$lab" >> "$GITHUB_OUTPUT"
           echo "https_fixture=$fixture" >> "$GITHUB_OUTPUT"
         fi

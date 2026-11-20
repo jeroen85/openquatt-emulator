@@ -35,9 +35,9 @@ class WorkflowPlanTest(unittest.TestCase):
         self.assertLess(int(plan["timeout_minutes"]), 360)
 
     def test_basic_profiles_do_not_request_a_lab_build(self):
-        for profile in ("basis", "herstart", "netwerk", "herstart,netwerk"):
+        for profile in ("basis", "herstart", "netwerk", "herstart,netwerk", "regeling", "stooklijn", "regeling-kern"):
             self.assertEqual(workflow_plan(profile, "x64", "a"*40)["lab"], "false")
-        for profile in ("https", "regeling", "stooklijn"):
+        for profile in ("https", "https,regeling"):
             self.assertEqual(workflow_plan(profile, "x64", "a"*40)["lab"], "true")
 
     def test_pr_source_pin_requires_one_full_sha(self):
@@ -60,11 +60,11 @@ class WorkflowPlanTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hil:base"):
             labeled_ref(event, "base")
 
-    def test_regulation_retry_selects_only_two_cases_and_the_lab_build(self):
+    def test_regulation_retry_selects_two_cases_without_the_https_build(self):
         event = {"pull_request": {"labels": [{"name": "hil:regeling-kern"}]}}
         selection = event_selection(event)
         self.assertEqual(selected_cases(selection, "cosim"), ("power-house", "stooklijn"))
-        self.assertEqual(workflow_plan(selection, "x64", "a" * 40)["lab"], "true")
+        self.assertEqual(workflow_plan(selection, "x64", "a" * 40)["lab"], "false")
         with self.assertRaisesRegex(ValueError, "geheugenreferentie"):
             workflow_plan(selection, "x64", "a" * 40, "b" * 40)
 

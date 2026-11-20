@@ -4,7 +4,7 @@ Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virt
 
 ## Installatie en gebruik
 
-Op Ubuntu en Apple Silicon draait de CLI via co-simulatie met esp-emu 1.1.0. Het profiel `uitgebreid` test webbelasting en geheugen, softwareherstart, netwerk, HTTPS, Power House, lowflowherstel en stooklijn. Voor Windows is er een WSL2-route. Power House, lowflowherstel en stooklijn zijn via co-simulatie beschikbaar met de aparte OpenTherm-GPIO-labbin. De desktopwerkbank en de overige regelscenario’s gebruiken de lokale macOS-backend. [Installatie en profielkeuze](docs/handleiding.md#linux-en-windows-met-wsl2)
+Op Ubuntu en Apple Silicon draait de CLI via co-simulatie met esp-emu 1.2.0. Het profiel `uitgebreid` test webbelasting en geheugen, softwareherstart, netwerk, HTTPS, Power House, lowflowherstel en stooklijn. Voor Windows is er een WSL2-route. Power House, lowflowherstel en stooklijn zijn via co-simulatie beschikbaar met de gewone Q Duo-factory-bin. De desktopwerkbank en de overige regelscenario’s gebruiken de lokale macOS-backend. [Installatie en profielkeuze](docs/handleiding.md#linux-en-windows-met-wsl2)
 
 De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. De CLI biedt ook een dynamische proef met OTT, OTB, compressor, flow en defrost. Je vindt er uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
 
@@ -20,7 +20,7 @@ Voor de virtuele dagmeting met OpenTherm-ketel en GPIO-flow is er een aparte lab
 
 De CLI biedt een Power House-basisproef met normale vraagopbouw en -afbouw, Single/Duo-overgangen en drie temperatuurprofielen. Er zijn aanvullende proeven voor gemeten ODU-respons en tijdelijke ODU-fasen, een aparte stooklijnproef en lokale HTTPS met foutinjectie en herstel. De HTTPS-succesproef gebruikt een afzonderlijke test-CA-build. **Onbekende CA afwijzen** controleert de TLS-testopstelling met de gewone factory-bin. De [scenariohandleiding](docs/scenarios.md) beschrijft testkeuze, opdrachten en dekkingsgrenzen.
 
-Met de aparte [OpenTherm-GPIO-labbuild](docs/handleiding.md#opentherm-uitval-en-herstel-op-ubuntu) kun je op Ubuntu de digitale uitwisseling met thermostaat en ketel testen, inclusief uitval en herstel.
+De gewone Q Duo-bin gebruikt zijn RMT-ontvangers voor de [digitale uitwisseling met thermostaat en ketel](docs/handleiding.md#opentherm-uitval-en-herstel-op-ubuntu).
 
 De CLI biedt ook vaste proeven voor defrostketelhulp, OpenTherm-setpointgrenzen, herstart en OTA op een eigen flashkopie, geheugen tijdens een export, bronuitval, Modbus-uitval, dauwpuntbeveiliging, MQTT-herverbinding onder webbelasting en de uur- en daggrens van de energiehistorie. [Kies een proef bij je wijziging](docs/scenarios.md#pr-tests-kiezen)
 
@@ -43,14 +43,20 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
 
 [HTTPS, Power House, lowflowherstel en stooklijn](docs/ubuntu-scenarios.md)
 draaien via de draagbare backend met geheugenmetingen en gelijktijdige
-SSE-/webbelasting. De regelproeven gebruiken de OpenTherm-GPIO-labbin.
+SSE-/webbelasting. De regelproeven gebruiken de gewone Q Duo-bin.
 HTTPS gebruikt een afzonderlijke lokale test-CA-build.
 
 ## GitHub Actions
 
 De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait standaard één Q Duo-rooktest met geheugenmeting onder webbelasting op Ubuntu x64. Met PR-labels zoals `hil:https`, `hil:regeling` en `hil:stooklijn` kies je extra proeven. `hil:uitgebreid` voert alle acht proeven uit. Meerdere profielen draaien ontdubbeld achter elkaar op één Ubuntu-runner.
 
-De basisproeven delen één gewone Q Duo-bin. HTTPS en de regelproeven delen één extra GPIO/test-CA-labbin. Een andere geheugenbaseline vraagt pas een extra build als hij naar een andere OpenQuatt-commit verwijst. De uitslag verschijnt automatisch als PR-reactie, inclusief de firmwarehashes. De skill blijft lokaal. [Profielen, buildkeuze en rapportage](docs/scenarios.md#firmwareproeven-op-github)
+
+Op een emulator-PR draait `basis` bij openen en na nieuwe commits. Voeg bijvoorbeeld
+`hil:https` of `hil:regeling` toe om gericht te testen. Voor een OpenQuatt-firmware-PR
+start je [Virtual HIL in Actions](https://github.com/jeroen85/openquatt-emulator/actions/workflows/virtual-hil.yml)
+met `openquatt_ref=refs/pull/<nummer>/merge`. De uitslag van die handmatige run staat in Actions.
+
+De basis- en regelproeven delen één gewone Q Duo-bin. Alleen HTTPS vraagt een extra testbuild met een lokale CA. Een andere geheugenbaseline vraagt pas een extra build als hij naar een andere OpenQuatt-commit verwijst. De uitslag verschijnt automatisch als PR-reactie, inclusief de firmwarehashes. De skill blijft lokaal. [Profielen, buildkeuze en rapportage](docs/scenarios.md#firmwareproeven-op-github)
 
 ## Gevalideerd met een ongewijzigde Q Duo-bin
 
