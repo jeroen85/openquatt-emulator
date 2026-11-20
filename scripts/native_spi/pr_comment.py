@@ -12,7 +12,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 import zipfile
 import zlib
 
-from .pr_profiles import CASES, LAB_CASES, PROFILES, selected_cases, selected_profiles
+from .pr_profiles import CASES, PROFILES, selected_cases, selected_profiles
 
 WORKFLOW = ".github/workflows/virtual-hil.yml"
 SKIPPED_TITLE = "Virtuele HIL · Geen proef aangevraagd"
@@ -125,6 +125,7 @@ def latest_for_pr(api, run, pr, repository_id):
 # Only these suites export the three internal-memory measurements.
 MEMORY_CASES = {"geheugen", "https", "power-house", "lowflow", "stooklijn"}
 REFERENCE_CASE = "geheugen-baseline"
+REGULATION_CASES = frozenset(("power-house", "lowflow", "stooklijn"))
 
 
 def parse_memory(memory, cases):
@@ -184,13 +185,18 @@ def parse_result(payload, expected_profile):
     if not isinstance(firmware, dict) or not firmware.keys() <= cases.keys():
         raise ValueError("Ongeldige firmware-identiteiten")
     for key, identity in firmware.items():
-        role = "lab" if key in LAB_CASES else "baseline" if key == "geheugen-baseline" else "candidate"
-        if (not isinstance(identity, dict) or identity.get("role") != role
+        roles = ("lab",) if key == "https" else ("baseline",) if key == REFERENCE_CASE else ("candidate",)
+        if key in REGULATION_CASES:
+            # Older runs used a single GPIO/test-CA image for all regulation cases.
+            roles += ("lab",)
+        if (not isinstance(identity, dict) or identity.get("role") not in roles
                 or not isinstance(identity.get("sha256"), str)
                 or not re.fullmatch(r"[0-9a-f]{64}", identity["sha256"])):
             raise ValueError("Ongeldige firmwarehash of -rol")
     if schema == 2 and any(passed and key not in firmware for key, passed in cases.items()):
         raise ValueError("Een geslaagde proef mist haar firmwarehash")
+    if len({firmware[key]["role"] for key in REGULATION_CASES & firmware.keys()}) > 1:
+        raise ValueError("De regelproeven delen geen firmwaretype")
     for role in ("candidate", "lab"):
         if len({item["sha256"] for item in firmware.values() if item["role"] == role}) > 1:
             raise ValueError("De proeven hebben geen gedeelde firmware per rol")
@@ -258,9 +264,13 @@ def render(run, repository, server, profiles):
         lines += ["", f"OpenQuatt-firmware volgens de run {revisions}."]
         if identities:
             lines += ["", "Gedeelde firmware (SHA-256):"]
-            roles = {"candidate": "Gewone Q Duo-bin", "lab": "GPIO/test-CA-labbin", "baseline": "Geheugenreferentie"}
+            titles = {"candidate": "Gewone Q Duo-bin", "lab": "HTTPS-testbin met lokale CA",
+                      "baseline": "Geheugenreferentie"}
             for (role, digest), names in identities.items():
-                lines += ["", f"- {roles[role]} `{digest}`: {', '.join(names)}."]
+                title = titles[role]
+                if role == "lab" and any(LABELS[key] in names for key in REGULATION_CASES):
+                    title = "GPIO/test-CA-labbin"
+                lines += ["", f"- {title} `{digest}`: {', '.join(names)}."]
 
     else:
         lines += ["", "De workflow leverde geen bruikbare proefdetails op."]

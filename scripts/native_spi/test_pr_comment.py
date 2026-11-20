@@ -230,6 +230,24 @@ class SharedSuiteCommentTest(unittest.TestCase):
             with self.subTest(mutate=mutate), self.assertRaises(ValueError):
                 parse_result(self.suite_bundle(mutate=mutate), "suite")
 
+    def test_regular_regulation_firmware_and_https_only_lab_are_reported(self):
+        def regular(result):
+            for key in ("power-house", "lowflow", "stooklijn"):
+                result["firmware"][key] = result["firmware"]["geheugen"].copy()
+        api = FakeGitHub()
+        api.artifacts = [artifact(10, "suite")]
+        api.downloads[10] = self.suite_bundle(mutate=regular)
+        self.assertTrue(publish(event(), REPO, SERVER, api))
+        body = api.writes[0][2]
+        self.assertIn("HTTPS-testbin met lokale CA", body)
+        self.assertIn("Power House-vraag en Single/Duo", body.split("Gewone Q Duo-bin", 1)[1].split("\n", 1)[0])
+
+    def test_mixed_regulation_firmware_layout_is_rejected(self):
+        def mixed(result):
+            result["firmware"]["power-house"] = result["firmware"]["geheugen"].copy()
+        with self.assertRaisesRegex(ValueError, "geen firmwaretype"):
+            parse_result(self.suite_bundle(mutate=mixed), "suite")
+
     def test_different_lab_images_cannot_be_reported_as_shared_firmware(self):
         with self.assertRaisesRegex(ValueError, "gedeelde firmware"):
             parse_result(self.suite_bundle(mutate=lambda r: r["firmware"]["https"].update(sha256="e"*64)), "suite")
