@@ -148,6 +148,27 @@ de hostduur, terwijl de firmwaretimers en scenario-eisen blijven gelden.
 
 ## Validatie met esp-emu 1.2.0
 
+### Hertest Power House en stooklijn
+
+Op 23 november 2026 draaide `regeling-kern` op Ubuntu x86-64 met esp-emu 1.2.0
+en OpenQuatt-dev `89e28f5`. Beide proeven deelden dezelfde gewone Q Duo-bin.
+[GitHub-run en rapporten](https://github.com/jeroen85/openquatt-emulator/actions/runs/45246577482)
+
+| Proef | Uitslag |
+| --- | --- |
+| Power House-vraag en Single/Duo | Afgekeurd door één te laat Modbus-antwoord van HP2. Alle regelstappen, inclusief stabiel Single, Duo, stop en herstart, waren geslaagd. |
+| Stooklijn, defrostblokkade en Duo-afbouw | Geslaagd. Alle regelfasen en geheugenvensters waren compleet. De firmware gaf geen Modbus-timingwaarschuwingen. |
+
+Power House bleef na de herstart stabiel draaien. Ruim twaalf minuten nadat
+de herstartfase was afgerond, gaf de firmware bij één verzoek aan HP2 een
+timeout en wees het antwoord af. De ingestelde wachttijd is 100 ms. De
+firmware meldde de timeout na circa 113 ms en het late antwoord na circa
+116 ms. De virtuele buitenunits stuurden 2.254 antwoorden op 2.254 verzoeken.
+De runner keurt de proef af bij zo’n timingwaarschuwing. De metingen laten
+open waar de vertraging ontstond tussen aanvraag en ontvangst.
+
+### Volledige run van 20 november
+
 De GitHub-run van 20 november 2026 gebruikte Ubuntu x86-64, esp-emu 1.2.0
 en OpenQuatt `f0da4507`. De zeven gewone proeven deelden één factory-bin.
 HTTPS gebruikte de testbuild met een lokale CA. De run duurde 2 uur en 32

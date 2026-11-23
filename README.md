@@ -31,7 +31,9 @@ Lokaal kun je ook de [digitale OpenTherm-uitwisseling met thermostaat en ketel](
 
 ## Testuitslagen
 
-Op **23 november 2026** slaagde de rooktest met webbelasting en geheugen op `main`, met OpenQuatt `89e28f5`. [GitHub-run](https://github.com/jeroen85/openquatt-emulator/actions/runs/45243760553)
+Op **23 november 2026** doorliepen Power House en stooklijn alle regelfasen op Ubuntu x86-64 met OpenQuatt `89e28f5` en esp-emu 1.2.0. **Stooklijn slaagde. Power House kreeg afkeur door één te laat Modbus-antwoord.** [Hertest en diagnose](docs/ubuntu-scenarios.md#hertest-power-house-en-stooklijn)
+
+De rooktest met webbelasting en geheugen slaagde diezelfde dag op `main` met dezelfde OpenQuatt-revisie. [Rooktest](https://github.com/jeroen85/openquatt-emulator/actions/runs/45243760553)
 
 Op **20 november 2026** slaagden **zes van de acht** proeven van `uitgebreid` op Ubuntu x86-64 met esp-emu 1.2.0 en OpenQuatt `f0da4507`. Power House bereikte geen stabiele eerste Single-fase. De stooklijn doorliep alle fasen en kreeg afkeur door twee te late Modbus-antwoorden. Zeven proeven deelden de gewone Q Duo-bin. HTTPS gebruikte een aparte testbuild met een lokale CA. [Uitslagen per proef](docs/ubuntu-scenarios.md#validatie-met-esp-emu-120) · [GitHub-run](https://github.com/jeroen85/openquatt-emulator/actions/runs/44801606553)
 
