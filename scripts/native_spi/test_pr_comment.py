@@ -194,6 +194,22 @@ class SharedSuiteCommentTest(unittest.TestCase):
         self.assertIn("d"*64, text)
         self.assertIn("GPIO/test-CA-labbin", text)
 
+    def test_hosted_lowflow_comment_reports_only_the_selected_cases(self):
+        def lowflow_only(result):
+            result["profiles"] = ["lowflow"]
+            cases = ("geheugen", "lowflow")
+            result["cases"] = dict.fromkeys(cases, True)
+            result["firmware"] = {key: {"role": "candidate", "sha256": "c" * 64} for key in cases}
+
+        api = FakeGitHub()
+        api.artifacts = [artifact(10, "suite")]
+        api.downloads[10] = self.suite_bundle(mutate=lowflow_only)
+        self.assertTrue(publish(event(), REPO, SERVER, api))
+        text = api.writes[0][2]
+        self.assertIn("| lowflow | Flowverlies tijdens defrost en herstel | Geslaagd |", text)
+        self.assertNotIn("Power House-vraag", text)
+        self.assertNotIn("Stooklijn", text)
+
     def test_comment_formats_heap_values_and_signed_differences(self):
         def measured(result):
             result["cases"]["geheugen-baseline"] = True

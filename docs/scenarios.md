@@ -59,12 +59,10 @@ De emulatorrepo draait automatisch `basis` op Ubuntu x64 voor een emulator-PR zo
 | `herstart` / `hil:herstart` | Basis + instelling opslaan, softwareherstart en opnieuw uitlezen |
 | `netwerk` / `hil:netwerk` | Basis + twee netwerkproeven voor Ethernet/NTP en terugval naar Wi-Fi |
 | `https` / `hil:https` | Basis + HTTPS voor weer en manifest, afgebroken verbinding en herstel onder webbelasting |
-| `regeling` / `hil:regeling` | Basis + Power House en flowverlies tijdens defrost met herstel |
-| `stooklijn` / `hil:stooklijn` | Basis + defrostblokkade, Duo-inschakeling en afbouw naar stabiel Single |
-| `regeling-kern` / `hil:regeling-kern` | Alleen Power House en stooklijn op dezelfde gewone Q Duo-bin, zonder basisproef |
-| `uitgebreid` / `hil:uitgebreid` | Alle [acht Ubuntu-proeven](../README.md#wat-kun-je-testen), inclusief één basisrun |
+| `regeling` / `hil:regeling` | Basis + flowverlies tijdens defrost met herstel |
+| `uitgebreid` / `hil:uitgebreid` | Alle [zes GitHub-proeven](../README.md#wat-kun-je-testen), inclusief één basisrun |
 
-Gebruik bij een handmatige run `profile` voor één profiel. Met `profiles` kun je meerdere profielen combineren, bijvoorbeeld `https,regeling,stooklijn`. Op een emulator-PR kun je meerdere labels combineren. Elke geselecteerde proef draait één keer op dezelfde Ubuntu-runner. Kies `uitgebreid` afzonderlijk. Het label `hil:uitgebreid` heeft voorrang op andere HIL-profiellabels.
+Gebruik bij een handmatige run `profile` voor één profiel. Met `profiles` kun je meerdere profielen combineren, bijvoorbeeld `https,regeling`. Op een emulator-PR kun je meerdere labels combineren. Elke geselecteerde proef draait één keer op dezelfde Ubuntu-runner. Kies `uitgebreid` afzonderlijk. Het label `hil:uitgebreid` heeft voorrang op andere HIL-profiellabels.
 
 Zonder `openquatt_ref` wordt bij het plannen de actuele OpenQuatt-`dev` opgehaald. Voeg op een emulator-PR één label `hil:ref:<volledige-commit-SHA>` toe om met dezelfde OpenQuatt-revisie te hertesten. Start daarna de proef met het gewenste HIL-profiel. De planner zet de ref één keer om naar een commit-SHA; alle builds gebruiken daarna exact die revisie. `architecture` kiest x64 of arm64. Hetzelfde is beschikbaar via `workflow_call`.
 
@@ -77,7 +75,7 @@ worden achter elkaar gebouwd met maximaal twee compilerjobs.
 
 Gebruik de HTTPS-testbuild uitsluitend in de emulator. De TLS-CA en privésleutels worden op de testrunner gegenereerd en blijven daar. Ze worden niet als artefact geüpload. De volledige testsessie draait in een eigen Linux-netwerknamespace met alleen loopback; ook automatische achtergrondverzoeken van de firmware bereiken zo geen extern internet. Bouwen en runtime-installatie gebeuren daarvóór.
 
-Combineer `regeling-kern` met `basis` als je ook een geheugenbaseline wilt. Vul bij `baseline_ref` de gewenste referentie in voor de bestaande webgeheugenvergelijking. Bij dezelfde OpenQuatt-commit wordt de gewone kandidaatbin tweemaal gestart met een verse flashkopie. Alleen bij een andere commit volgt één extra gewone firmwarebuild. Baseline en kandidaat draaien achter elkaar op dezelfde host, vóór de aanvullende proeven. Een andere ESPHome-versie geeft afkeur van de vergelijking.
+Vul bij `baseline_ref` de gewenste referentie in voor de webgeheugenvergelijking. Bij dezelfde OpenQuatt-commit wordt de gewone kandidaatbin tweemaal gestart met een verse flashkopie. Alleen bij een andere commit volgt één extra gewone firmwarebuild. Baseline en kandidaat draaien achter elkaar op dezelfde host, vóór de aanvullende proeven. Een andere ESPHome-versie geeft afkeur van de vergelijking.
 
 Webbelasting, HTTPS, Power House, flowverlies tijdens defrost en stooklijn meten de vrije interne heap, heapmin sinds boot en het grootste vrije blok. In het rapport staan de waarden per fase. Alleen de webgeheugenproef vergelijkt automatisch met een baseline. Werkelijke DRAM-, DMA- en stackmarges vragen fysieke HIL.
 
@@ -87,9 +85,9 @@ Na iedere voltooide automatische run voor een PR in deze emulatorrepo verschijnt
 
 De rapporteur draait vanaf vertrouwde `main` in een afzonderlijke `workflow_run` met schrijfrecht. De testworkflow heeft alleen leesrechten. Rapportartefacten worden als begrensde gegevens verwerkt; PR-code wordt niet met het schrijftoken uitgevoerd. Handmatige runs leveren een Actions-samenvatting en artefacten, maar plaatsen geen reactie op een willekeurige OpenQuatt-PR waarvan alleen een ref is gekozen.
 
-De firmwaretimers blijven actief. Power House, lowflow en stooklijn draaien respectievelijk 55, ruim 18 en 50 hostminuten. HTTPS draait 7 minuten. De [volledige Ubuntu-validatie van 20 november](ubuntu-scenarios.md#validatie-met-esp-emu-120) duurde 2 uur en 32 minuten inclusief bouwen. Kies voor een gerichte wijziging het bijbehorende profiel. Krijgt de job geen runner, dan ontbreekt een firmware-uitslag.
+De firmwaretimers blijven actief. `uitgebreid` vraagt op GitHub ongeveer 40 minuten testtijd plus builds. Flowherstel draait ruim 18 minuten en HTTPS 7 minuten. Kies voor een gerichte wijziging het bijbehorende profiel. Krijgt de job geen runner, dan ontbreekt een firmware-uitslag.
 
-Modbus-uitval onder warmtevraag en energiehistorie zijn lokale proeven voor de native macOS-backend.
+Draai Power House en stooklijn lokaal met `--profile regeling-kern` of als losse scenario’s. Het lokale profiel `regeling` omvat Power House en flowherstel. Lokaal draait `uitgebreid` alle acht proeven met co-simulatie. Modbus-uitval onder warmtevraag en energiehistorie draaien lokaal op de native macOS-backend.
 
 ## Gerichte firmwareproeven
 

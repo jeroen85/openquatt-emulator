@@ -7,7 +7,7 @@ de gastklok en de controles per fase.
 
 Installeer de [CLI en runtime](handleiding.md#1-installeren). Voer de opdrachten
 uit vanuit de emulatorrepo. Zie [de profielkeuze](scenarios.md#firmwareproeven-op-github)
-om dezelfde proeven via GitHub te starten.
+om HTTPS en flowherstel via GitHub te starten.
 
 ## Firmware klaarzetten
 
@@ -132,9 +132,11 @@ onder `qualification`.
 - `scenario_load` bevat de SSE-/webbelasting van de regelproeven en de
   overlapcontroles per meetvenster.
 
-Op GitHub kies je `https`, `regeling` of `stooklijn` voor een gerichte
-proef. `regeling-kern` draait alleen Power House en stooklijn. `uitgebreid`
-draait alle acht proeven. Zie de [profielkeuze](scenarios.md#firmwareproeven-op-github).
+Op GitHub kies je `https` voor HTTPS of `regeling` voor flowherstel.
+`uitgebreid` combineert die proeven met webgeheugen, softwareherstart en beide
+netwerkproeven. Power House en stooklijn draaien lokaal via de opdrachten
+hierboven of samen met `--profile regeling-kern` in de CLI. Zie de
+[profielkeuze](scenarios.md#firmwareproeven-op-github).
 
 Een onvoltooide fase of ontbrekende recorderdekking geeft afkeur. De
 10 s-sampling kan korte dips missen. Heapmin is het minimum sinds boot.
@@ -150,7 +152,7 @@ de hostduur, terwijl de firmwaretimers en scenario-eisen blijven gelden.
 
 ### Hertest Power House en stooklijn
 
-Op 23 november 2026 draaide `regeling-kern` op Ubuntu x86-64 met esp-emu 1.2.0
+Op 23 november 2026 draaide `regeling-kern` nog via GitHub op Ubuntu x86-64 met esp-emu 1.2.0
 en OpenQuatt-dev `89e28f5`. Beide proeven deelden dezelfde gewone Q Duo-bin.
 [GitHub-run en rapporten](https://github.com/jeroen85/openquatt-emulator/actions/runs/45246577482)
 

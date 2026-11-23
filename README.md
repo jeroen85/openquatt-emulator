@@ -14,7 +14,7 @@ Voor Ethernet en netwerkterugval heb je de Q Duo-factory-bin met W5500-ondersteu
 
 ## Wat kun je testen?
 
-Het GitHub-profiel `uitgebreid` draait acht firmwareproeven op Ubuntu. Met de CLI kun je dezelfde profielen draaien.
+Het GitHub-profiel `uitgebreid` draait zes firmwareproeven op Ubuntu. Met de CLI kun je dezelfde proeven kiezen.
 
 | Proef | Wat wordt gecontroleerd |
 | --- | --- |
@@ -23,11 +23,9 @@ Het GitHub-profiel `uitgebreid` draait acht firmwareproeven op Ubuntu. Met de CL
 | **Ethernet en NTP** | W5500, DHCP, webtoegang en synchronisatie met een lokale klok. |
 | **Ethernet → Wi-Fi** | De virtuele kabel valt weg en de web-app wordt via Wi-Fi weer bereikbaar. |
 | **HTTPS** | Lokaal weer- en manifestverkeer, een afgebroken TLS-verbinding en herstel onder webbelasting. |
-| **Power House** | Oplopende en aflopende warmtevraag, Single/Duo-overgangen, stop en herstart. |
 | **Flowverlies tijdens defrost** | Compressorstop, vrijgave na flowherstel en herstart na de minimum-uit-tijd. |
-| **Stooklijn** | Defrostblokkade, bijschakelen naar Duo en afbouw naar stabiel Single. |
 
-Lokaal kun je ook de [digitale OpenTherm-uitwisseling met thermostaat en ketel](docs/handleiding.md#compressor-flow-en-defrost-met-opentherm) draaien via co-simulatie. De native macOS-backend biedt aanvullende proeven, onder meer voor ODU-respons, bronuitval, Modbus-uitval, koelen, MQTT, OTA en energiehistorie. De [scenariogids](docs/scenarios.md#pr-tests-kiezen) helpt bij het kiezen van een proef.
+De lange [Power House- en stooklijnproeven](docs/ubuntu-scenarios.md#power-house) draai je lokaal met de CLI. Je kunt daar ook de [digitale OpenTherm-uitwisseling met thermostaat en ketel](docs/handleiding.md#compressor-flow-en-defrost-met-opentherm) draaien via co-simulatie. De native macOS-backend biedt aanvullende proeven, onder meer voor ODU-respons, bronuitval, Modbus-uitval, koelen, MQTT, OTA en energiehistorie. De [scenariogids](docs/scenarios.md#pr-tests-kiezen) helpt bij het kiezen van een proef.
 
 ## Testuitslagen
 
@@ -41,10 +39,10 @@ De [vroege netwerkmetingen](docs/handleiding.md#referentiemeting-ethernet-en-ter
 
 ## GitHub Actions
 
-- **PR in deze emulatorrepo.** Zonder HIL-label draait `basis` op Ubuntu x64. Voeg bijvoorbeeld `hil:https`, `hil:regeling` of `hil:stooklijn` toe voor gerichte proeven. De bot plaatst één uitslag bij de PR, met firmwarehashes en beschikbare geheugencijfers.
+- **PR in deze emulatorrepo.** Zonder HIL-label draait `basis` op Ubuntu x64. Voeg bijvoorbeeld `hil:https` toe voor HTTPS of `hil:regeling` voor flowverlies tijdens defrost. De bot plaatst één uitslag bij de PR, met firmwarehashes en beschikbare geheugencijfers.
 - **PR in OpenQuatt.** Open [Actions → Virtual HIL → Run workflow](https://github.com/jeroen85/openquatt-emulator/actions/workflows/virtual-hil.yml) in deze repo en zet `openquatt_ref` op `refs/pull/<nummer>/merge`. Kies een profiel en lees de uitslag in de Actions-run.
 
-De geselecteerde proeven draaien één keer achter elkaar op dezelfde Ubuntu-runner. De gewone Q Duo-bin wordt gedeeld. Voor HTTPS volgt één aparte testbuild. Een geheugenbaseline vraagt alleen een extra build bij een andere OpenQuatt-revisie. Reserveer voor `uitgebreid` circa 2,5 uur inclusief builds. [Profielkeuze, baseline en PR-rapport](docs/scenarios.md#firmwareproeven-op-github)
+De geselecteerde proeven draaien één keer achter elkaar op dezelfde Ubuntu-runner. De gewone Q Duo-bin wordt gedeeld. Voor HTTPS volgt één aparte testbuild. Een geheugenbaseline vraagt alleen een extra build bij een andere OpenQuatt-revisie. Reserveer voor `uitgebreid` circa 40 minuten testtijd, plus de firmwarebuilds. [Profielkeuze, baseline en PR-rapport](docs/scenarios.md#firmwareproeven-op-github)
 
 ## Emulatorcode testen
 

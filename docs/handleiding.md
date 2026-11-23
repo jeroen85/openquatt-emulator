@@ -99,8 +99,8 @@ python3 -m scripts.native_spi.pr_suite --backend cosim --profile herstart,netwer
 
 De runner test webbelasting met geheugenmeting, softwareherstart, Ethernet met
 lokale NTP en terugval naar Wi-Fi. Elke proef krijgt een nieuwe flashkopie.
-`uitgebreid` voegt [HTTPS, Power House, flowverlies tijdens defrost en
-stooklijn](ubuntu-scenarios.md) toe. HTTPS vraagt een tweede bin met
+Lokaal voegt `uitgebreid` [HTTPS, Power House, flowverlies tijdens defrost en
+stooklijn](ubuntu-scenarios.md) toe. Op GitHub omvat `uitgebreid` zes proeven, inclusief HTTPS en flowherstel. HTTPS vraagt een tweede bin met
 lokale test-CA. Geef die lokaal mee met `--lab-firmware` en
 `--https-fixture`. De profielen `modbus`, `energie` en `alles`
 vereisen de native macOS-backend. Zie de [profielkeuze](scenarios.md#firmwareproeven-op-github).

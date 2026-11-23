@@ -6,8 +6,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from .memory_comparison import METRICS
+from .pr_plan import workflow_plan
 from .pr_suite import BASE, memory_summary, run_case, run_suite, select_cases, wait_for_case
-from .pr_profiles import HOSTED_CASES, LAB_CASES
+from .pr_profiles import COSIM_CASES, LAB_CASES
 
 
 class PrSuiteTest(unittest.TestCase):
@@ -22,7 +23,7 @@ class PrSuiteTest(unittest.TestCase):
     def test_ubuntu_suite_runs_each_portable_case_once(self):
         network = ("ethernet-ntp", "ethernet-failover")
         self.assertEqual(select_cases("netwerk", "cosim"), (BASE, *network))
-        self.assertEqual(select_cases("uitgebreid", "cosim"), HOSTED_CASES)
+        self.assertEqual(select_cases("uitgebreid", "cosim"), COSIM_CASES)
         with self.assertRaisesRegex(ValueError, "cosim"):
             select_cases("netwerk", "native")
 
@@ -90,10 +91,11 @@ class PrSuiteTest(unittest.TestCase):
             return {"title": key, "passed": True, "reasons": [], "report": {"memory": memory, "input": {"sha256": sha}}}
         with tempfile.TemporaryDirectory() as folder, patch("scripts.native_spi.pr_suite.run_case", side_effect=result) as run:
             root = Path(folder); production = root/"production.bin"; lab = root/"lab.bin"; tls = root/"tls"
-            code = run_suite("https,regeling,stooklijn,herstart,netwerk", production, "cosim", 19460, root,
-                             lab_firmware=lab, https_fixture=tls)
+            plan = workflow_plan("uitgebreid", "x64", "a" * 40)
+            code = run_suite(plan["profiles"], production, "cosim", 19460, root, lab_firmware=lab, https_fixture=tls)
+            expected_cases = (BASE, "herstart", "ethernet-ntp", "ethernet-failover", "https", "lowflow")
             self.assertEqual(code, 0)
-            self.assertEqual([call.args[0] for call in run.call_args_list], list(HOSTED_CASES))
+            self.assertEqual([call.args[0] for call in run.call_args_list], list(expected_cases))
             for call in run.call_args_list:
                 self.assertEqual(call.args[1], lab if call.args[0] in LAB_CASES else production)
                 if call.args[0] == "https": self.assertEqual(call.args[-1], ("--https-fixture", str(tls)))
@@ -101,7 +103,7 @@ class PrSuiteTest(unittest.TestCase):
             for key, row in report["firmware"].items():
                 expected = {"role": "lab", "sha256": "b"*64} if key == "https" else {"role": "candidate", "sha256": "a"*64}
                 self.assertEqual(row, expected)
-            self.assertEqual(report["cases"], dict.fromkeys(HOSTED_CASES, True))
+            self.assertEqual(report["cases"], dict.fromkeys(expected_cases, True))
 
     def test_missing_lab_or_tls_fails_before_starting_any_probe(self):
         with tempfile.TemporaryDirectory() as folder, patch("scripts.native_spi.pr_suite.run_case") as run:
