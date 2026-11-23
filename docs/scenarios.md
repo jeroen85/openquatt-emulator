@@ -1,6 +1,6 @@
 # Vaste regressiescenario’s
 
-Gebruik deze CLI-proeven voor wijzigingen aan onder meer Power House, stooklijnbedrijf, OpenTherm, herstarts en netwerkverkeer. De firmwareproeven laden de gekozen Q Duo-factory-bin rechtstreeks. De lokale HTTPS-succesproef vraagt een testbuild met een eigen test-CA. OpenTherm-uitval en herstel op Ubuntu vraagt de aparte GPIO-labbuild. Een ELF of debugger is voor geen van deze runs nodig.
+Gebruik deze CLI-proeven voor wijzigingen aan onder meer Power House, stooklijnbedrijf, OpenTherm, herstarts en netwerkverkeer. De firmwareproeven laden de gekozen Q Duo-factory-bin rechtstreeks. De lokale HTTPS-succesproef vraagt een testbuild met een eigen test-CA. De draagbare backend gebruikt de gewone Q Duo-bin voor OpenTherm en de regelproeven. Een ELF of debugger is voor geen van deze runs nodig.
 
 Kies de exacte bronrevisie, bouw `configs/heatpump_controller_q/duo.yaml` en bewaar de bronrevisie, configuratie, ESPHome-/ESP-IDF-versie en SHA-256 van de factory-bin. De imagecontrole herkent de firmwareopbouw; zij bewijst de bronrevisie niet. De [installatiehandleiding](handleiding.md) beschrijft de runtime en poorten.
 
@@ -23,7 +23,7 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | Power House bij ontbrekende frequentie, opstartverhoging of oil return | Power House: tijdelijke ODU-fasen (`odu-transients`) | Benodigde capaciteit behouden tijdens de afwijking en terugkeren naar normaal bedrijf. |
 | Stooklijnregeling | `heating-curve` | RECOVERY/MAINTAIN, defrostblokkade, Duo-afbouw en stabiel Single. |
 | OpenTherm, compressor-, flow- of defrostkoppeling | `dynamics` | Digitale OTT/OTB-uitwisseling en de gekoppelde toestanden op macOS. |
-| OpenTherm-uitval en herstel op Ubuntu | [GPIO-labproef](handleiding.md#opentherm-uitval-en-herstel-op-ubuntu) | Digitale communicatie met thermostaat en ketel en onafhankelijk herstel zonder warmtevraag. |
+| OpenTherm op Ubuntu | [`dynamics` met co-simulatie](handleiding.md#opentherm-uitval-en-herstel-op-ubuntu) | Digitale communicatie met thermostaat en ketel, compressor, flow en defrost. |
 | Lowflowbeveiliging of vrijgave na flowherstel | `lowflow` | Beveiligingsingreep en herstel met de vastgelegde firmwaretimers. |
 | Web, netwerk, buffers, taken of andere geheugenbeïnvloedende code | `pr-memory` met baseline en kandidaat | Vergelijkende heapmeting onder gelijktijdige web/SSE-belasting; volg de [handleiding](handleiding.md#geheugenproef-voor-een-pr). |
 | Weer-/manifestverzoeken, TLS-worker of gelijktijdige webactiviteit | `https` | Geslaagde TLS, serialisatie, verbinding afbreken en herstel met de lokale test-CA-build. |
@@ -51,7 +51,7 @@ De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op Ub
 
 Kies aanvullende proeven met een PR-label of via **Actions → Virtual HIL → Run workflow**. Labels blijven bij nieuwe commits actief; verwijder ze na de proef om onnodige herhaling te voorkomen. Een labelwijziging buiten deze lijst start geen firmwareproef en vervangt de bestaande PR-reactie niet.
 
-| Profiel / PR-label | Proeven naast de basisrun |
+| Profiel / PR-label | Wat draait het profiel |
 | --- | --- |
 | `basis` / `hil:basis` | Alleen rooktest en geheugen onder webbelasting |
 | `herstart` / `hil:herstart` | Instelling opslaan, softwareherstart en opnieuw uitlezen |
@@ -59,7 +59,7 @@ Kies aanvullende proeven met een PR-label of via **Actions → Virtual HIL → R
 | `https` / `hil:https` | Weerdata en manifest, TLS-serialisatie, verbinding afbreken en herstel naast SSE en webdownloads |
 | `regeling` / `hil:regeling` | Power House-vraagopbouw/-afbouw, Single/Duo, stop/herstart en lowflow tijdens defrost met herstel |
 | `stooklijn` / `hil:stooklijn` | Defrostblokkade, Duo-inschakeling en afbouw naar stabiel Single |
-| `regeling-kern` / `hil:regeling-kern` | Alleen Power House en stooklijn op dezelfde labbin, zonder basisproef |
+| `regeling-kern` / `hil:regeling-kern` | Alleen Power House en stooklijn op dezelfde gewone Q Duo-bin, zonder basisproef |
 | `uitgebreid` / `hil:uitgebreid` | Alle acht Ubuntu-proeven hierboven, inclusief één basisrun |
 
 Meerdere labels combineren hun proeven. Bij een handmatige run kun je hetzelfde doen met `profiles`, bijvoorbeeld `https,regeling,stooklijn`. De selectie wordt ontdubbeld: een geselecteerde basis- en geheugenproef draait één keer en de gekozen firmwareproeven lopen achter elkaar op **één Ubuntu-runner**. `uitgebreid` kies je afzonderlijk; het label heeft voorrang op de andere HIL-labels.
@@ -68,9 +68,12 @@ Zonder `openquatt_ref` wordt bij het plannen de actuele OpenQuatt-`dev` opgehaal
 
 ### Gedeelde firmware en geheugen
 
-De workflow bouwt één gewone Q Duo-bin voor de basisrun, softwareherstart en netwerkproeven. Wanneer een van de vier labproeven wordt gekozen, bouwt hij daarnaast **één gezamenlijke GPIO/test-CA-labbin**. HTTPS, Power House, lowflow en stooklijn gebruiken diezelfde labbin. Webbronnen en ESPHome worden per broncheckout klaargezet; firmwarevarianten worden sequentieel gebouwd met maximaal twee compilerjobs.
+De workflow bouwt één gewone Q Duo-bin voor alle basis- en regelproeven.
+Alleen het HTTPS-scenario gebruikt een tweede build met een lokale test-CA.
+Webbronnen en ESPHome worden per broncheckout klaargezet. Firmwarevarianten
+worden achter elkaar gebouwd met maximaal twee compilerjobs.
 
-De labreceptuur en GPIO-bronnen staan in deze emulatorrepo. De voorbereiding controleert hun hashes en of de ontvangstpatch op de gekozen OpenQuatt-revisie past. De productieconfiguratie blijft behouden. De extra configuratie heeft de herkenbare naam `openquatt-ot-lab`; gebruik deze uitsluitend in de emulator. De TLS-CA en privésleutels worden op de testrunner gegenereerd en blijven daar. Ze worden niet als artefact geüpload. De volledige testsessie draait in een eigen Linux-netwerknamespace met alleen loopback; ook automatische achtergrondverzoeken van de firmware bereiken zo geen extern internet. Bouwen en runtime-installatie gebeuren daarvóór.
+Gebruik de HTTPS-testbuild uitsluitend in de emulator. De TLS-CA en privésleutels worden op de testrunner gegenereerd en blijven daar. Ze worden niet als artefact geüpload. De volledige testsessie draait in een eigen Linux-netwerknamespace met alleen loopback; ook automatische achtergrondverzoeken van de firmware bereiken zo geen extern internet. Bouwen en runtime-installatie gebeuren daarvóór.
 
 Combineer `regeling-kern` met `basis` als je ook een geheugenbaseline wilt. Vul bij `baseline_ref` de gewenste referentie in voor de bestaande webgeheugenvergelijking. Bij dezelfde OpenQuatt-commit wordt de gewone kandidaatbin tweemaal gestart met een verse flashkopie. Alleen bij een andere commit volgt één extra gewone firmwarebuild. Baseline en kandidaat draaien achter elkaar op dezelfde host, vóór de aanvullende proeven. Een andere ESPHome-versie geeft afkeur van de vergelijking.
 

@@ -98,14 +98,16 @@ class PortableOpenThermTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fixture.tick(peer, 10 * SECOND)
 
-    def test_regular_firmware_is_rejected_before_starting_a_gpio_scenario(self):
+    def test_regular_firmware_reaches_the_portable_opentherm_runner(self):
+        firmware = Path("q-duo.factory.bin")
         for scenario in ("dynamics", "power-house", "heating-curve", "lowflow"):
             with self.subTest(scenario=scenario), patch(
                     "scripts.native_spi.run.factory_info", return_value={"project": "openquatt"}), patch(
-                    "scripts.native_spi.run.ensure_cosim") as backend:
-                with self.assertRaisesRegex(ValueError, "GPIO-labbin"):
-                    run(None, backend="cosim", scenario=scenario)
-                backend.assert_not_called()
+                    "scripts.native_spi.run.reserve_ports"), patch(
+                    "scripts.native_spi.run.run_owned", return_value=0) as runner:
+                self.assertEqual(run(firmware, backend="cosim", scenario=scenario), 0)
+                self.assertEqual(runner.call_args.args[0], firmware)
+                self.assertEqual(runner.call_args.args[8], scenario)
 
     def test_wire_history_cannot_grow_without_limit(self):
         fixture = OpenTherm(Path("unused"))

@@ -54,7 +54,7 @@ Wie het archief via de browser downloadt, kan het lokaal uitpakken en het bestan
 
 ### Linux en Windows met WSL2
 
-De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.1.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`. De rooktest ondersteunt ook W5500-Ethernet en terugval naar Wi-Fi via dezelfde backend.
+De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.2.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`. De rooktest ondersteunt ook W5500-Ethernet en terugval naar Wi-Fi via dezelfde backend.
 
 Gebruik op Ubuntu 24.04:
 
@@ -81,13 +81,23 @@ python3 -m scripts.native_spi.pr_suite --backend cosim --profile herstart,netwer
   --firmware /pad/naar/firmware.factory.bin --port-base 19600 --output ./oq-hil-resultaten
 ```
 
-Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `regeling`, `energie` en `alles` de lokale macOS-backend. Het profiel `uitgebreid` voegt [HTTPS, Power House, lowflowherstel en stooklijn](ubuntu-scenarios.md) toe met één gedeelde labbin. De GitHub-workflow bouwt deze zelf. Bij lokaal gebruik geef je `--lab-firmware` en `--https-fixture` mee. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
+Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `energie` en `alles` de lokale macOS-backend. Het profiel `uitgebreid` voegt [HTTPS, Power House, lowflowherstel en stooklijn](ubuntu-scenarios.md) toe. Alleen voor HTTPS bouwt de GitHub-workflow een tweede bin met lokale test-CA. Bij lokaal gebruik geef je die bin en fixture mee via `--lab-firmware` en `--https-fixture`. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
 
 #### OpenTherm-uitval en herstel op Ubuntu
 
-Deze lokale proef vergt de aparte Q Duo-labbuild uit OpenQuatt. Volg `scripts/hil/tools/README.md` in een OpenQuatt-checkout die `scripts/hil/configs/gpio_opentherm_duo.yaml` bevat. Daar staan het bouwcommando, de CLI-proef en de tijdscriteria. De firmware gebruikt GPIO-interrupts voor ontvangst en behoudt de OpenTherm-decoders en RMT voor zenden. Dit omzeilt de [RMT-ontvangstbeperking van esp-emu 1.1.0](https://github.com/espressif/esp-emulator/issues/66).
+Met esp-emu 1.2.0 test je OpenTherm met de gewone Q Duo-factory-bin. De runner
+schakelt de thermostaatontvanger in via de web-API en controleert de digitale
+uitwisseling met thermostaat en ketel, plus compressor, flow en defrost.
 
-De proef controleert beide digitale verbindingen, onafhankelijke onderbreking en herstel met verse waarden. De vier standaard Ubuntu-proeven gebruiken de gewone Q Duo-bin. De GPIO-proef draait afzonderlijk en houdt de warmtevraag uit.
+```sh
+python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_firmware" \
+  --network wifi --scenario dynamics --name q-duo-opentherm
+```
+
+Voor een afzonderlijke uitval- en herstelproef zonder warmtevraag bestaat in
+de OpenQuatt GPIO-labcheckout nog de oorspronkelijke proef uit
+`scripts/hil/tools/README.md`. Die route was opgezet voor
+[de RMT-beperking in esp-emu 1.1.0](https://github.com/espressif/esp-emulator/issues/66).
 
 ## 2. De juiste firmware kiezen
 

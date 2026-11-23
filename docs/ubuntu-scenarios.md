@@ -1,6 +1,6 @@
 # HTTPS en regeling op Ubuntu
 
-De draagbare backend gebruikt esp-emu 1.1.0 en de lokale netwerk- en
+De draagbare backend gebruikt esp-emu 1.2.0 en de lokale netwerk- en
 buitenunitmodellen. De proeven draaien de Q Duo-factory-bin rechtstreeks.
 De rapporten bevatten de firmwarehash, fixturebronnen, virtuele klok,
 Modbus-opdrachten en de controles per fase.
@@ -11,47 +11,20 @@ hieronder uit vanuit de emulatorcheckout.
 
 ## Firmware klaarzetten
 
-Voor Power House, lowflow, stooklijn en HTTPS gebruik je één gedeelde
-Q Duo-labbin. De receptuur staat in deze emulatorrepo en werkt op een eigen,
-verse OpenQuatt-checkout van de gewenste bronrevisie. Bouw de gewone
-Q Duo-bin eerst als je ook de basisproeven wilt draaien.
+Stel `oq_firmware` in op de gewone Q Duo-factory-bin van de gewenste
+OpenQuatt-revisie. Power House, lowflow en stooklijn gebruiken rechtstreeks de
+RMT-ontvangers van die firmware. Dat werkt vanaf
+[esp-emu 1.2.0](https://github.com/espressif/esp-emulator/releases/tag/v1.2.0).
 
-Activeer de ESPHome-omgeving die bij die broncheckout hoort. Voer daarna
-vanuit de emulatorrepo uit:
-
-```sh
-oq_source=/pad/naar/verse-openquatt-checkout
-oq_tls="$PWD/.tmp/native-spi/shared-lab-tls"
-python3 -m scripts.native_spi.firmware_lab --firmware-root "$oq_source" --fixture "$oq_tls"
-ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT=2 esphome compile \
-  "$oq_source/configs/heatpump_controller_q/.virtual-https.yaml"
-oq_lab_bin="$oq_source/.esphome/build/virtual_https/build/firmware.factory.bin"
-python3 -m scripts.native_spi.https_fixture --firmware-root "$oq_source" \
-  --output "$oq_tls" --bind-firmware "$oq_lab_bin"
-oq_gpio_bin="$oq_lab_bin"
-oq_https_bin="$oq_lab_bin"
-```
-
-De voorbereiding controleert de meegeleverde GPIO-bronnen en past de
-ontvangstpatch toe. De labfirmware gebruikt GPIO-interrupts voor
-OpenTherm-ontvangst, de bestaande decoders en RMT voor zenden. De gewone
-firmware gebruikt RMT ook voor ontvangst. De runner weigert voor de
-Ubuntu-regelproeven een gewone factory-bin.
-
-Dezelfde labbin vertrouwt de lokale test-CA voor HTTPS. Certificaatverificatie
-blijft actief. Het fixturemanifest bindt de HTTPS-bin aan de CA,
-bronrevisie en GPIO-receptuur. De privésleutels blijven in de fixturemap;
-gebruik de labimage uitsluitend in de emulator. Hergebruik geen labbin
-van een andere firmwarewijziging.
-
-De oudere losse GPIO-config uit de lokale OpenQuatt-labcheckout blijft
-bruikbaar voor de afzonderlijke regelproeven. De GitHub-workflow gebruikt
-de hierboven beschreven gedeelde receptuur.
+Bouw voor de HTTPS-succesproef een aparte bin met een lokale test-CA.
+Volg de [HTTPS-receptuur](scenarios.md#https-volledig-lokaal) om de fixture
+te genereren en aan de binhash te binden. Bewaar de privésleutels lokaal en
+gebruik die bin uitsluitend in de emulator.
 
 ## Power House
 
 ```sh
-python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_gpio_bin" \
+python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_firmware" \
   --scenario power-house --network wifi --memory \
   --power-house-climate mild --seconds 3300 --port-base 23330 --name ubuntu-power-house
 ```
@@ -67,14 +40,13 @@ de vrije interne heap, het minimum sinds boot en het grootste vrije blok
 bij opstarten, Single, Duo, stop en herstel. Tijdens de regelproef zijn
 een SSE-stream en herhaalde webbundeldownloads actief. Ieder gemeten
 bedrijfsvenster moet een geslaagde download met SSE-overlap bevatten.
-De runner bewaart de eventtijden en keurt eventgaten boven 12 s of een
-voortijdig gesloten stream af. Aan beide randen van elk bedrijfsvenster
+De runner bewaart de eventtijden en keurt eventgaten boven 12 gastseconden af. Een stille verbinding wordt heropend. Aan beide randen van elk bedrijfsvenster
 moet binnen 12 s een SSE-event zijn ontvangen.
 
 ## Power House met lowflowherstel
 
 ```sh
-python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_gpio_bin" \
+python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_firmware" \
   --scenario lowflow --network wifi --memory \
   --seconds 1100 --port-base 23520 --name ubuntu-lowflow
 ```
@@ -98,7 +70,7 @@ bedrijfsvensters dekken.
 ## Stooklijn
 
 ```sh
-python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_gpio_bin" \
+python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_firmware" \
   --scenario heating-curve --network wifi --memory \
   --seconds 3000 --port-base 23340 --name ubuntu-stooklijn
 ```
@@ -111,9 +83,7 @@ bepaald bij opstarten, defrost, Duo en het stabiele Single-herstel.
 
 ## HTTPS onder webbelasting
 
-Gebruik de hierboven gebouwde en gebonden gedeelde labbin. De oudere
-[afzonderlijke HTTPS-receptuur](scenarios.md#https-volledig-lokaal) blijft ook
-beschikbaar voor een lokale proef zonder OpenTherm.
+Gebruik `oq_https_bin` en `oq_tls` uit de [HTTPS-receptuur](scenarios.md#https-volledig-lokaal).
 
 ```sh
 python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_https_bin" \
@@ -174,7 +144,7 @@ achter elkaar op dezelfde host met dezelfde configuratie en belasting.
 Noteer de architectuur en hostdeadlines. Verhoog bij een trage VM zo nodig
 de hostduur, terwijl de firmwaretimers en scenario-eisen blijven gelden.
 
-## Lokale verificatie
+## Eerdere verificatie met esp-emu 1.1.0
 
 Op 17 november 2026 zijn de proeven met esp-emu 1.1.0 uitgevoerd in lokale
 Ubuntu arm64-VM’s op Apple Silicon. De normale firmwaretimers bleven actief.
