@@ -9,6 +9,7 @@ import hashlib
 import http.client
 import io
 import json
+import math
 import os
 import platform
 from pathlib import Path
@@ -42,6 +43,7 @@ from .network_probe import MODES, NetworkProbe
 from .pr_memory import assessment as pr_assessment, markdown as pr_markdown
 from .pr_memory import summarize_pr_recording
 from .pr_workload import PROBES_STOP_MS, WINDOWS as PR_WINDOWS, PrWebLoad, summarize_workload
+from .pt1000 import dynamic_qualification, matches_fixture
 from .qualification import FUNCTIONAL_COMPLETION, qualify
 from .transport import RtuPeer
 from .heating_curve import HeatingCurve
@@ -630,6 +632,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 mqtt.result["stage"] = "complete"
 
     web_setup_count = 0
+    pt1000_reads = None
 
     def inspect_web():
         nonlocal web_setup_count
@@ -663,11 +666,19 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 report["web_assets_verified"] = True
                 (out / "web-app.js").write_bytes(js)
                 (out / "web-app.css").write_bytes(css)
+        before_ms = guest_clock() if pt1000_reads is not None else None
         sensor = get(PT1000, port=port)
+        if pt1000_reads is not None:
+            after_ms = guest_clock()
+        value = json.loads(sensor).get("value") if sensor else None
+        if pt1000_reads is not None:
+            if type(value) is float and not math.isfinite(value):
+                value = None
+            pt1000_reads.append((before_ms, after_ms, value))
         if sensor:
-            value = json.loads(sensor).get("value")
             report["pt1000_value_c"] = value
-            report["pt1000_verified"] = isinstance(value, (int, float)) and abs(value - temperature) < 0.15
+            if pt1000_reads is None:
+                report["pt1000_verified"] = matches_fixture(value, temperature)
             (out / "pt1000.json").write_bytes(sensor)
         if port in verified_asset_ports and probe.observe(get, started):
             report["web_checks"] = report.get("web_checks", 0) + 1
@@ -708,6 +719,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, errors="replace",
         )
+        if extension and mode == "device" and env.get("OQ_NATIVE_RTD_CONTROL"):
+            pt1000_reads = []
+            report["pt1000_verified"] = False
         report["pid"] = process.pid
         atomic_json(out / "owner.json", {"pid": process.pid, "runner_pid": os.getpid(), "owned": True, "ports": ports})
         reader = threading.Thread(target=consume, name="firmware-serial", daemon=True)
@@ -884,6 +898,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
 
         report["model_errors"] = []
         ot_events = []
+        pt1000_samples = []
         try:
             if trace.is_file():
                 with trace.open() as capture:
@@ -893,12 +908,19 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                             report["model_errors"].append(event)
                         elif event["kind"] == "opentherm":
                             ot_events.append(event)
+                        elif event["kind"] == "pt1000-sample" and pt1000_reads is not None:
+                            pt1000_samples.append(event)
                         elif event["kind"] == "ethernet":
                             probe.result["wire"] = event
                         elif event["kind"] == "local-services":
                             report["local_services"] = event
         except (ValueError, OSError, KeyError) as exc:
             error("native trace", exc)
+
+        if pt1000_reads is not None:
+            report["pt1000_dynamic"] = dynamic_qualification(
+                temperature, pt1000_reads, pt1000_samples, report.get("guest_uptime_ms", 0))
+            report["pt1000_verified"] = report["pt1000_dynamic"]["verified"]
 
         if cosim and cosim.opentherm is not None:
             ot_events.extend(cosim.opentherm.delivered(report.get("guest_uptime_ms", 0)))

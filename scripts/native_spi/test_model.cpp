@@ -95,6 +95,29 @@ int main() {
       rejects([&] { rtd.exchange(0); });
       ++cases;
     }
+    {  // Report the fixture latched for completed MAX31865 sample reads.
+      FakeMemory memory;
+      DeviceModel d(memory);
+      int samples = 0;
+      d.event = [&](const Event& value) { samples += value.rtd_sample_read; };
+      d.rtd.temperature = 34;
+      select(d, true);
+      fifo(d, 1, false);
+      d.rtd.temperature = 38;
+      fifo(d, 0);
+      check(samples == 0);
+      fifo(d, 0);
+      check(samples == 1 && d.rtd.sampled_temperature == 34 && d.rtd.sample_valid);
+      select(d, false);
+      d.rtd.temperature_valid = false;
+      select(d, true);
+      d.write(kSpi + 0x10, (1u << 27) | (1u << 28) | 1);
+      d.write(kSpi + 0x1c, 23);
+      d.write(kSpi + 0x98, 1);
+      d.write(kSpi, 1u << 24);
+      check(samples == 2 && d.rtd.sampled_temperature == 38 && !d.rtd.sample_valid);
+      ++cases;
+    }
     {  // Native GDMA transmit and receive, preserving neighbouring bytes.
       FakeMemory memory;
       DeviceModel d(memory);

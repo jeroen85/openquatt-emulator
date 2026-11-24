@@ -36,6 +36,9 @@ inline void dram(uint32_t address, uint32_t length) {
 
 struct Max31865 {
   double temperature = 30.0;
+  double sampled_temperature = 30.0;
+  bool temperature_valid = true;
+  bool sample_valid = false;
   uint8_t physical_fault = 0;
   uint8_t config = 0;
   bool selected = false;
@@ -51,6 +54,8 @@ struct Max31865 {
     if (active) {
       require(std::isfinite(temperature) && temperature >= 0 && temperature <= 100,
               "RTD temperature outside qualified range");
+      sampled_temperature = temperature;
+      sample_valid = temperature_valid;
       const double resistance = 1000 * (1 + 3.9083e-3 * temperature - 5.775e-7 * temperature * temperature);
       sample = static_cast<uint16_t>(std::lround(resistance / 1500.0 * 32768.0) << 1);
       if (physical_fault) sample |= 1;
@@ -140,6 +145,7 @@ struct Event {
   std::vector<uint8_t> tx;
   std::vector<uint8_t> rx;
   uint64_t number;
+  bool rtd_sample_read;
 };
 
 enum class WriteAction { kPass, kIntercept };
@@ -329,6 +335,7 @@ class DeviceModel {
       for (uint32_t i = 0; i < count; ++i) tx[i] = (regs[(0x98 + base + i) / 4] >> (((base + i) % 4) * 8)) & 255;
     }
     auto candidate = rtd;
+    bool rtd_sample_read = false;
     if (ethernet) {
       const uint16_t command = regs[0x18 / 4] & 0xffff;
       const uint16_t address = (command << 8) | (command >> 8);
@@ -339,6 +346,13 @@ class DeviceModel {
           rx[i] = w5500.read(control >> 3, address + i);
       }
     } else {
+      const bool has_command = candidate.address < 0;
+      const bool reads_registers = has_command ? !(tx.front() & 0x80) : !candidate.writing;
+      const int first_register = has_command ? tx.front() & 0x7f : candidate.address;
+      // Completing data register 2 marks a sample even when the command and
+      // the two data bytes travel in separate SPI transfers under one CS.
+      rtd_sample_read = miso && reads_registers && first_register <= 2 &&
+                        count > static_cast<uint32_t>(2 - first_register + has_command);
       for (uint32_t i = 0; i < count; ++i) rx[i] = candidate.exchange(tx[i]);
     }
     offset = 0;
@@ -376,7 +390,7 @@ class DeviceModel {
     rtd = candidate;
     regs[0x3c / 4] |= kDone;
     ++transactions;
-    if (!ethernet && event) event({tx, rx, transactions});
+    if (!ethernet && event) event({tx, rx, transactions, rtd_sample_read});
   }
 };
 }  // namespace oq_native

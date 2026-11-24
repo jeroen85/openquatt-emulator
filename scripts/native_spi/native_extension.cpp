@@ -183,6 +183,7 @@ struct State {
       memory.bus = bus;
       model = std::make_unique<oq_native::DeviceModel>(memory);
       model->rtd.temperature = fixture_temperature;
+      model->rtd.temperature_valid = rtd_schedule == nullptr;
       if (ethernet_port) {
         model->ethernet_enabled = true;
         lan = std::make_unique<oq_native::EthernetLan>(model->w5500, ethernet_port, ethernet_cable, trace);
@@ -198,7 +199,17 @@ struct State {
             "{\"kind\":\"spi-transfer\",\"number\":%llu,\"tx\":\"%s\",\"rx\":\"%s\",\"dma_reads\":%llu,\"dma_"
             "writes\":%llu}\n",
             value.number, tx.c_str(), rx.c_str(), model->dma_reads, model->dma_writes);
-        oq_native::require(written > 0 && std::fflush(trace) == 0, "Native SPI trace write failed");
+        oq_native::require(written > 0, "Native SPI trace write failed");
+        if (rtd_schedule && value.rtd_sample_read) {
+          const auto& rtd = model->rtd;
+          const auto guest_us = static_cast<unsigned long long>(clock_published_us);
+          const int result = rtd.sample_valid && rtd.temperature_valid && !(rtd.sample & 1)
+              ? std::fprintf(trace, "{\"kind\":\"pt1000-sample\",\"guest_us\":%llu,\"fixture_c\":%.9g}\n",
+                             guest_us, rtd.sampled_temperature)
+              : std::fprintf(trace, "{\"kind\":\"pt1000-sample\",\"guest_us\":%llu,\"fixture_c\":null}\n", guest_us);
+          oq_native::require(result > 0, "Native RTD trace write failed");
+        }
+        oq_native::require(std::fflush(trace) == 0, "Native SPI trace write failed");
       };
     }
     return *model;
@@ -301,10 +312,13 @@ void write_hook(void* bus, uint32_t address, uint32_t value) {
         return;
       }
       if (rtd_schedule && address == oq_native::kSpi && (value & (1u << 24))) {
+        model.rtd.temperature_valid = false;
         if (FILE* file = std::fopen(rtd_schedule, "r")) {
           double next;
-          if (std::fscanf(file, "%lf", &next) == 1 && std::isfinite(next) && next >= 0 && next <= 100)
+          if (std::fscanf(file, "%lf", &next) == 1 && std::isfinite(next) && next >= 0 && next <= 100) {
             model.rtd.temperature = next;
+            model.rtd.temperature_valid = true;
+          }
           std::fclose(file);
         }
       }
