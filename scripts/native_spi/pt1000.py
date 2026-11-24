@@ -45,8 +45,13 @@ def dynamic_qualification(start_c, reads, events, end_ms):
         sample_times.append(at // 1000)
         fixture_values.append(expected if type(expected) in (int, float) and 0 <= expected <= 100 else None)
 
+    previous_read_end = 0
     for read in reads:
         before, after, value = read
+        if not previous_read_end <= before <= after:
+            result["reason"] = "invalid_read_clock"
+            return result
+        previous_read_end = after
         match = matching_sample(read, sample_times, fixture_values)
         result["last_read"] = {"from_ms": before, "to_ms": after, "value_c": value, "match": match}
         if match is not None:

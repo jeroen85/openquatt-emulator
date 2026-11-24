@@ -59,3 +59,14 @@ class Pt1000QualificationTest(unittest.TestCase):
                                                [sample(12000, 34)], 13200)["verified"])
         self.assertFalse(dynamic_qualification(30, [(11100, 11150, 34.04)],
                                                [sample(11000, 34), sample(10500, 34)], 11400)["verified"])
+
+    def test_guest_clock_regression_cannot_reuse_previous_dynamic_evidence(self):
+        events = [sample(6000, 30), sample(11000, 34)]
+        for reads in (
+            [(12000, 12025, 34.02), (7000, 7025, 30.01)],
+            [(12000, 12025, 34.02), (13000, 7000, 30.01), (7500, 7525, 30.01)],
+        ):
+            with self.subTest(reads=reads):
+                result = dynamic_qualification(30, reads, events, 8000)
+                self.assertFalse(result["verified"], result)
+                self.assertEqual(result["reason"], "invalid_read_clock")

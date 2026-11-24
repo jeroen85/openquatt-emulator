@@ -320,11 +320,18 @@ Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde
 | --- | --- |
 | Firmwareboot | `setup_complete` is `true`. `panics` en `errors` zijn leeg. |
 | Web-app | `web_checks` telt geslaagde controles. `web_assets_verified` betreft de webbundels. De laatste geslaagde webcontrole moet binnen tien seconden van het einde liggen. |
-| PT1000 | `pt1000_value_c` ligt minder dan `0,15 °C` van `fixture_temperature_c`. Een kleine afwijking door de sensorrepresentatie is normaal. |
+| PT1000 | Bij een vaste fixture wijkt `pt1000_value_c` minder dan 0,15 °C af van `fixture_temperature_c`. Voor een dynamische native fixture staat het bewijs onder `pt1000_dynamic`. |
 | Beide buitenunits | `peer.recent` bevat geslaagde Modbus-registeruitlezingen voor unit `1` en `2`. Controleer ook `modbus_timing_warnings` en de CRC- en fouttellers onder `peer`. |
 | Ethernet | `network.ethernet_checks`, `network.ethernet_ip` en `network.wire` tonen geslaagde webcontroles, het gastadres, DHCP-bevestigingen en frameverkeer. |
 | Terugval | `network.ethernet_http_lost` bevestigt verlies van HTTP over Ethernet. `wifi_recovery_event_s` is het tijdstip van de herstelmelding van de firmware. `network.wifi_recovery_checks` telt de succesvolle Wi-Fi-controles na het lostrekken van de virtuele kabel. |
 | Herhaalbaarheid | `input.sha256` identificeert de firmware. `input_hash_unchanged` en `flash_file_unchanged` bevestigen de ongewijzigde bestanden. `native_build` bevat de toolchain en libslirp-versie. |
+
+Bij een dynamische native fixture vergelijkt de runner de directe webmeting
+met de temperatuur van het MAX31865-monster op de gastklok. De tolerantie
+blijft 0,15 °C. Het laatste webantwoord moet bij een recent monster passen.
+Minstens één geldige meting moet ook afwijken van de starttemperatuur.
+`pt1000_dynamic.last_read` vermeldt het webverzoek en het gekoppelde
+monster. Bij afkeur staat de reden onder `pt1000_dynamic.reason`.
 
 Voor de hersteltijd trek je `network.cable_cut_s` af van `network.wifi_restored_s`. Beide tijden lopen vanaf het begin van dezelfde proef. Vergelijk twee firmwarebuilds met dezelfde netwerkproef, temperatuur, duur en emulatorversie. Leg de twee firmware-SHA's en de afzonderlijke rapporten naast elkaar.
 
