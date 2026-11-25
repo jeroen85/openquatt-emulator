@@ -18,27 +18,23 @@ CASES = {
 NETWORK_CASES = ("ethernet-ntp", "ethernet-failover")
 LAB_CASES = frozenset({"https"})
 COSIM_SECONDS = {"power-house": 3300, "lowflow": 1100, "stooklijn": 3000, "https": 420}
-COSIM_PROFILES = ("basis", "herstart", "netwerk", "https", "regeling", "stooklijn", "regeling-kern", "uitgebreid")
-HOSTED_CASES = (BASE, "herstart", *NETWORK_CASES, "https", "power-house", "lowflow", "stooklijn")
+COSIM_PROFILES = ("basis", "herstart", "netwerk", "https", "regeling", "lowflow",
+                  "stooklijn", "regeling-kern", "uitgebreid")
+COSIM_CASES = (BASE, "herstart", *NETWORK_CASES, "https", "power-house", "lowflow", "stooklijn")
 PROFILES = {
     "basis": (BASE,),
     "herstart": (BASE, "herstart"),
     "modbus": (BASE, "modbus"),
     "energie": (BASE, "energie-uur", "energie-dag"),
     "regeling": (BASE, "power-house", "lowflow"),
+    "lowflow": (BASE, "lowflow"),
     "https": (BASE, "https"),
     "stooklijn": (BASE, "stooklijn"),
     "regeling-kern": ("power-house", "stooklijn"),
     "alles": (BASE, "herstart", "modbus", "energie-uur", "energie-dag", "power-house", "lowflow"),
     "netwerk": (BASE, *NETWORK_CASES),
-    "uitgebreid": HOSTED_CASES,
+    "uitgebreid": COSIM_CASES,
 }
-PROFILE_LABELS = {"basis": "rooktest en geheugen", "herstart": "softwareherstart",
-                  "netwerk": "Ethernet en Wi-Fi-terugval", "https": "HTTPS en herstel",
-                  "regeling": "Power House en lowflowherstel", "stooklijn": "stooklijn",
-                  "regeling-kern": "Power House en stooklijn",
-                  "uitgebreid": "alle Ubuntu-proeven"}
-HIL_LABELS = {"hil:" + name: name for name in COSIM_PROFILES}
 
 
 def selected_profiles(selection, backend="cosim"):
@@ -61,5 +57,5 @@ def selected_cases(selection, backend):
     profiles = selected_profiles(selection, backend)
     if backend == "cosim":
         wanted = {key for profile in profiles for key in PROFILES[profile]}
-        return tuple(key for key in HOSTED_CASES if key in wanted)
+        return tuple(key for key in COSIM_CASES if key in wanted)
     return tuple(dict.fromkeys(key for profile in profiles for key in PROFILES[profile]))

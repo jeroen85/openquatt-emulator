@@ -1,8 +1,10 @@
 # OpenQuatt Emulator gebruiken
 
-Met de emulator draai je een ongewijzigde Q Duo-factory-bin op een virtuele ESP32-S3. Je kunt zien of de firmware opstart, of de OpenQuatt web-app antwoordt en of de controller communiceert met beide virtuele buitenunits. De PT1000-fixture geeft de firmware een bekende aanvoertemperatuur. De virtuele proeven draaien lokaal op de testmachine. Voor de proef volstaat de factory-bin.
+Kies eerst een backend. Voor de gewone Q Duo-firmwareproeven werkt co-simulatie op Ubuntu en Apple Silicon. Voor de desktopwerkbank en aanvullende [macOS-scenario’s](scenarios.md#pr-tests-kiezen) heb je de native macOS-backend nodig. Beide draaien lokaal en testen met een eigen flashkopie.
 
-## 1. Installeren op een Mac met Apple Silicon
+## 1. Installeren
+
+### macOS met Apple Silicon
 
 Open Terminal. Controleer of `uname -m` de waarde `arm64` geeft en of je Python 3.11 of hoger gebruikt. Gebruik een native Terminal-sessie als de opdracht `x86_64` geeft op een Apple Silicon-Mac.
 
@@ -21,14 +23,22 @@ pkg-config --modversion slirp
 
 De oorspronkelijke netwerkproeven zijn uitgevoerd met libslirp 4.9.5. Noteer de uitkomst van `pkg-config` als je resultaten tussen machines vergelijkt.
 
-Clone de emulatorrepo met een GitHub-account dat toegang heeft. Als je de broncode al lokaal hebt, open dan de bestaande map. Voer de volgende opdrachten uit vanuit de hoofdmap van die checkout, waar `README.md` en `scripts/native_spi/` staan.
+Clone de emulatorrepo. Heb je al een checkout, ga dan naar de map met `README.md` en `scripts/native_spi/`.
 
 ```sh
 git clone https://github.com/jeroen85/openquatt-emulator.git
 cd openquatt-emulator
 ```
 
-### Espressif-runtime klaarzetten
+#### CLI met co-simulatie
+
+Installeer esp-emu 1.2.0 met de meegeleverde installer. De installer controleert zowel het archief als het uitgepakte programma. Draai daarna de [rooktest](#eerste-rooktest-met-co-simulatie).
+
+```sh
+python3 -m scripts.native_spi.cosim_build
+```
+
+#### Desktopwerkbank en native CLI
 
 Gebruik exact esp-emu **0.51.0 voor macOS arm64**. De hostuitbreiding gebruikt interne adressen en functies van die specifieke build. Het archief en het uitgepakte programma hebben elk hun eigen SHA-256. Onderstaande opdrachten stoppen bij een verkeerde checksum. [Espressif-release 0.51.0](https://github.com/espressif/esp-emulator/releases/tag/v0.51.0)
 
@@ -54,9 +64,7 @@ Wie het archief via de browser downloadt, kan het lokaal uitpakken en het bestan
 
 ### Linux en Windows met WSL2
 
-De CLI draait de Q Duo-rooktest, webgeheugenproef en softwareherstart via de officiële co-simulatie van esp-emu 1.2.0. De backend voert de gewone factory-bin uit en test boot, Wi-Fi, webtoegang, PT1000 en Modbus met beide buitenunits. Hij ondersteunt Linux x64 en arm64. Dezelfde route draait op macOS arm64 met `--backend cosim`. De rooktest ondersteunt ook W5500-Ethernet en terugval naar Wi-Fi via dezelfde backend.
-
-Gebruik op Ubuntu 24.04:
+Installeer de toolchain en esp-emu 1.2.0 op Ubuntu 24.04. Dit werkt op x64 en arm64.
 
 ```sh
 sudo apt-get update
@@ -64,40 +72,38 @@ sudo apt-get install -y g++ lsof python3 git ca-certificates pkg-config libslirp
 git clone https://github.com/jeroen85/openquatt-emulator.git
 cd openquatt-emulator
 python3 -m scripts.native_spi.cosim_build
-python3 -m scripts.native_spi.run --backend cosim --firmware /pad/naar/firmware.factory.bin \
-  --network wifi --scenario compatibility --port-base 19600 --seconds 150 --name q-duo-rooktest
 ```
-
-De installer controleert de SHA-256 van het officiële Espressif-archief en het uitgepakte programma. Elke run gebruikt een eigen flashkopie. Poorten zijn Wi-Fi `19600`, UART1 `19602` en co-simulatie `19603` bij bovenstaande poortbasis. De CLI meldt de rapportmap. Een geslaagde proef krijgt de uitslag `PASS_COSIM`.
 
 Voor Windows gebruik je Ubuntu onder WSL2. Installeer Ubuntu bijvoorbeeld met `wsl --install -d Ubuntu-24.04` in PowerShell, open daarna de Ubuntu-terminal en voer daar de Linux-opdrachten uit. Bewaar de checkout in je Linux-thuismap. Een bestaand firmwarebestand op de Windows-schijf kun je meegeven via `/mnt/c/...`. Deze route wacht nog op een afzonderlijke WSL2-proef. [WSL installeren](https://learn.microsoft.com/windows/wsl/install)
 
+### Eerste rooktest met co-simulatie
+
+Wijs `oq_firmware` naar je [Q Duo-factory-bin](#2-de-juiste-firmware-kiezen). Voer de opdracht uit vanuit de emulatorrepo, op Ubuntu of macOS.
+
+```sh
+oq_firmware="/pad/naar/firmware.factory.bin"
+python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_firmware" \
+  --network wifi --scenario compatibility --port-base 19600 --seconds 150 --name q-duo-rooktest
+```
+
+De runner controleert boot, Wi-Fi, de web-app, PT1000 en Modbus met beide buitenunits. Het rapport staat in de map die de CLI bij `run` meldt. Een geslaagde proef krijgt `PASS_COSIM`.
+
 Kies voor de W5500-rooktest `--network ethernet`. Voor het doormeten van automatische terugval kies je `--network failover --seconds 180`. Met `--network ethernet --ntp-epoch 1768474320` controleert de rooktest tevens of de firmware de lokale klok overneemt. De tijd loopt vanaf die UTC-epoch. Het rapport bevat het aantal NTP-antwoorden en de uitgelezen firmwaretijd. Alle testservers luisteren op loopback. De lokale fixture beantwoordt DNS en NTP zelf.
 
-Draai de vier gewone Ubuntu-basisproeven achter elkaar met dezelfde factory-bin:
+Met één factory-bin kun je ook vier proeven achter elkaar draaien.
 
 ```sh
 python3 -m scripts.native_spi.pr_suite --backend cosim --profile herstart,netwerk \
-  --firmware /pad/naar/firmware.factory.bin --port-base 19600 --output ./oq-hil-resultaten
+  --firmware "$oq_firmware" --port-base 19600 --output ./oq-hil-resultaten
 ```
 
-Dit geeft webbelasting en geheugen, softwareherstart, Ethernet met lokale NTP en Ethernet-naar-Wi-Fi. Elke proef begint met een eigen flashkopie. Gebruik voor de desktopwerkbank en de profielen `modbus`, `energie` en `alles` de lokale macOS-backend. Het profiel `uitgebreid` voegt [HTTPS, Power House, lowflowherstel en stooklijn](ubuntu-scenarios.md) toe. Alleen voor HTTPS bouwt de GitHub-workflow een tweede bin met lokale test-CA. Bij lokaal gebruik geef je die bin en fixture mee via `--lab-firmware` en `--https-fixture`. [GitHub-profielen](scenarios.md#firmwareproeven-op-github)
-
-#### OpenTherm-uitval en herstel op Ubuntu
-
-Met esp-emu 1.2.0 test je OpenTherm met de gewone Q Duo-factory-bin. De runner
-schakelt de thermostaatontvanger in via de web-API en controleert de digitale
-uitwisseling met thermostaat en ketel, plus compressor, flow en defrost.
-
-```sh
-python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_firmware" \
-  --network wifi --scenario dynamics --name q-duo-opentherm
-```
-
-Voor een afzonderlijke uitval- en herstelproef zonder warmtevraag bestaat in
-de OpenQuatt GPIO-labcheckout nog de oorspronkelijke proef uit
-`scripts/hil/tools/README.md`. Die route was opgezet voor
-[de RMT-beperking in esp-emu 1.1.0](https://github.com/espressif/esp-emulator/issues/66).
+De runner test webbelasting met geheugenmeting, softwareherstart, Ethernet met
+lokale NTP en terugval naar Wi-Fi. Elke proef krijgt een nieuwe flashkopie.
+Lokaal voegt `uitgebreid` [HTTPS, Power House, flowverlies tijdens defrost en
+stooklijn](ubuntu-scenarios.md) toe. Op GitHub omvat `uitgebreid` zes proeven, inclusief HTTPS en flowherstel. HTTPS vraagt een tweede bin met
+lokale test-CA. Geef die lokaal mee met `--lab-firmware` en
+`--https-fixture`. De profielen `modbus`, `energie` en `alles`
+vereisen de native macOS-backend. Zie de [profielkeuze](scenarios.md#firmwareproeven-op-github).
 
 ## 2. De juiste firmware kiezen
 
@@ -136,7 +142,22 @@ Met **Stoppen** breek je alleen de actieve proef af. Het resultaat wordt **Proef
 | **Ethernet** | Start met de virtuele kabel aangesloten. De firmware gebruikt haar eigen W5500-driver en haalt een DHCP-adres op. | **Ethernet actief** en een bereikbare web-app via de Ethernet-webpoort. Het gastadres is `10.42.0.15`. |
 | **Ethernet → Wi-Fi** | Bereidt Wi-Fi voor, sluit de virtuele kabel aan, vraagt de firmware om **Automatic** en verifieert drie Ethernet-webcontroles. Daarna trekt de runner de virtuele kabel los. | **Kabel los · Wi-Fi herstellen**. Ethernet-HTTP valt weg en daarna verschijnt **Terug op Wi-Fi**. De web-app opent weer via de Wi-Fi-webpoort. |
 
-Bij een schone flash kan het installatieportaal ook over Ethernet verschijnen. De runner voert provisioning automatisch uit. Je hebt daarvoor geen gegevens van je eigen Wi-Fi of een fysieke netwerkkabel nodig. Tijdens de eerder geslaagde terugvalproef duurde het 55,5 seconden van kabelbreuk tot de eerste geslaagde webcontrole via Wi-Fi. De gemeten hersteltijd geldt voor deze virtuele proef op de Mac.
+Bij een schone flash kan het installatieportaal ook over Ethernet verschijnen. De runner voert provisioning automatisch uit. Je hebt daarvoor geen gegevens van je eigen Wi-Fi of een fysieke netwerkkabel nodig.
+
+### Referentiemeting Ethernet en terugval
+
+Bij de eerste macOS-validatie van het W5500-model gebruikten twee netwerkproeven
+de ongewijzigde Q Duo-factory-bin van OpenQuatt `31282d13`. De SHA-256 van de
+invoer en van het flashbestand bleef gelijk.
+
+| Proef | Hostduur | Uitkomst | Modbus |
+| --- | ---: | --- | ---: |
+| Ethernet bij koude start | 90 s | DHCP op `10.42.0.15` en 27 geslaagde webcontroles | 80/80 antwoorden |
+| Ethernet → Wi-Fi | 180 s | Ethernet-HTTP viel weg. De eerste geslaagde Wi-Fi-webcontrole op `192.168.4.2` volgde na 55,5 s, daarna slaagden nog 26 controles. | 140/140 antwoorden |
+
+Beide buitenunits antwoordden in beide proeven. Er waren geen firmwarecrashes
+of Modbus-timingwaarschuwingen. De 55,5 s is gemeten op de host tijdens deze
+virtuele proef op de Mac. [Latere Ubuntu-validatie](ubuntu-scenarios.md#validatie-met-esp-emu-120)
 
 ### Poorten en adressen
 
@@ -149,9 +170,9 @@ Bij een schone flash kan het installatieportaal ook over Ethernet verschijnen. D
 
 Gebruik in de browser `127.0.0.1`. Het IP-adres dat de firmware meldt, hoort bij het virtuele netwerk binnen de emulator. De lokale poort geeft de browser toegang tot die gast. Na een wisseling van Ethernet naar Wi-Fi opent **Open de web-app** de andere lokale poort. Een al geopend tabblad blijft op zijn oorspronkelijke adres.
 
-## 4. Dezelfde proeven via de terminal
+## 4. Proeven via de terminal
 
-Vervang het voorbeeldpad door dat van je eigen factory-bin. Voer de opdrachten uit vanuit de hoofdmap van de emulatorrepo. Je kunt ze ook gebruiken vanuit een lokaal testscript zonder browser.
+Voer de opdrachten uit vanuit de emulatorrepo. De voorbeelden in dit hoofdstuk gebruiken standaard de native macOS-backend. Voeg voor de [ondersteunde co-simulatieproeven](scenarios.md#pr-tests-kiezen) `--backend cosim` toe, ook op een Mac waarop alleen esp-emu 1.2.0 is geïnstalleerd.
 
 ```sh
 oq_firmware="/pad/naar/q-duo.factory.bin"
@@ -169,7 +190,7 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
 - `--seconds` bepaalt de meetduur in seconden op de host. Voor een volledige proef zijn de bovenstaande tijden een bruikbaar begin. De eerste build van de hostuitbreiding gebeurt vóór die meetduur.
 - `--temperature` stelt de PT1000-fixture in. Gebruik een punt bij decimalen, bijvoorbeeld `30.5`.
 - `--name` is het herkenbare voorvoegsel van de rapportmap. Gebruik letters, cijfers, underscores of koppeltekens en begin met een letter of cijfer.
-- `--port-base 19600` geeft Wi-Fi poort `19600`, Ethernet zo nodig `19601` en UART1 `19602`. Reserveer bij `mqtt-reconnect`, `energy-boundary` en `restart` ook `19603`. OTA gebruikt bovendien `19604`.
+- `--port-base 19600` geeft Wi-Fi poort `19600`, Ethernet zo nodig `19601` en UART1 `19602`. Co-simulatie gebruikt daarnaast `19603` voor het emulatorprotocol en bij softwareherstart `19604` voor aansturing. Met de native backend gebruiken `mqtt-reconnect`, `energy-boundary` en `restart` poort `19603`. OTA gebruikt ook `19604`.
 
 Voor [MQTT-herverbinding](scenarios.md#mqtt-herverbinding-onder-webbelasting) en de [uur- en daggrens van de energiehistorie](scenarios.md#uur--en-daggrens-van-de-energiehistorie) kiest de CLI de lokale broker of klok. Beide proeven gebruiken Ethernet, een gewone Q Duo-factory-bin en een eigen flashkopie.
 
@@ -179,7 +200,7 @@ De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat
 
 Start elke functionele CLI-proef in een eigen terminal met een eigen poortreeks en naam. Elke run krijgt een eigen emulatorproces, flashkopie en rapportmap.
 
-Start bijvoorbeeld in terminal 1 een rooktest op `19600–19602`.
+Deze voorbeelden draaien twee native rooktests naast elkaar. Met `--backend cosim` kun je dezelfde poortbasissen gebruiken. Kies bij parallelle co-simulatieproeven met softwareherstart minstens vijf poorten per run.
 
 ```sh
 python3 -m scripts.native_spi.run --firmware "/pad/naar/eerste-q-duo.factory.bin" \
@@ -197,12 +218,14 @@ Open per terminal het `report.json` in de map die de eigen CLI als `run` meldt. 
 
 Draai de baseline en kandidaat voor een geheugenvergelijking achter elkaar op dezelfde host, met dezelfde backend. Houd andere emulatorruns buiten het meetvenster om de hostbelasting vergelijkbaar te houden.
 
+<a id="opentherm-uitval-en-herstel-op-ubuntu"></a>
+
 ### Compressor, flow en defrost met OpenTherm
 
 Start de dynamische proef met dezelfde Q Duo-factory-bin. Kies een stabiele Wi-Fi- of Ethernet-route. De standaardduur voor dit scenario is zeven minuten. Bij de geteste firmware kan de eerste compressorstart maximaal 240 seconden geblokkeerd blijven vanaf bevestigde stilstand. De proef gebruikt de ingebouwde productietimers.
 
 ```sh
-python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_firmware" \
   --network wifi --scenario dynamics --name q-duo-dynamics
 ```
 
@@ -210,7 +233,9 @@ De runner schakelt OpenTherm in via de gewone instellingen van de firmware en ki
 
 De proef begint met stilstand en nulflow. Daarna controleert hij de echte compressoropdracht en de gemeten frequentie, de gedeelde flow van de twee units in serie, de defroststatus en vierwegklep, en een korte flowonderbreking met herstel. De ODU-modelklok volgt de systeemtimer van de virtuele ESP32. De PT1000 behoudt in deze proef de ingestelde temperatuur.
 
-In `report.json` vind je de meetpunten onder `dynamics.checkpoints`, de bevestigde OpenTherm Data-ID's onder `dynamics.wire` en de klokstand onder `guest_uptime_ms` en `odu_uptime_ms`. De eindcontrole vereist recente voortgang van de ODU-klok en recente antwoorden op beide OpenTherm-aansluitingen. `mmio.jsonl` bevat de OpenTherm-frames met richting, RMT-kanaal en virtuele tijd.
+In `report.json` vind je de meetpunten onder `dynamics.checkpoints`, de bevestigde OpenTherm Data-ID's onder `dynamics.wire` en de klokstand onder `guest_uptime_ms` en `odu_uptime_ms`. De eindcontrole vereist dat de ODU-klok blijft lopen en beide OpenTherm-peers recent hebben geantwoord. De digitale frames staan in `opentherm.json` bij co-simulatie of in `mmio.jsonl` bij de native backend.
+
+Deze opdracht werkt op Ubuntu en macOS met esp-emu 1.2.0. Gebruik voor de native macOS-backend `--backend native`. Voor langdurige uitval van de geselecteerde verwarmingsbron op macOS is er de [bronuitvalproef](scenarios.md#uitval-van-de-verwarmingsbron).
 
 ### Dagmeting met ketelwarmte
 
@@ -231,7 +256,7 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
   --network ethernet --scenario lowflow --name q-duo-lowflow
 ```
 
-Deze proef duurt standaard 13 minuten. Zodra de firmware een draaiende compressor, defrost en de vierwegklep bevestigt, simuleert de runner een blokkade in de gedeelde leiding. De thermostaat blijft warmte vragen. De runner houdt de defroststatus van de buitenunit actief totdat de firmware een stop heeft bevestigd. Daarna houdt hij de leiding nog minstens 65 seconden geblokkeerd, herstelt de flow en wacht op een automatische herstart.
+Deze native proef duurt standaard 13 minuten. Zie [flowherstel onder Ubuntu](ubuntu-scenarios.md#power-house-met-lowflowherstel) voor co-simulatie en de bijbehorende webbelasting. Zodra de firmware een draaiende compressor, defrost en de vierwegklep bevestigt, simuleert de runner een blokkade in de gedeelde leiding. De thermostaat blijft warmte vragen. De runner houdt de defroststatus van de buitenunit actief totdat de firmware een stop heeft bevestigd. Daarna houdt hij de leiding nog minstens 65 seconden geblokkeerd, herstelt de flow en wacht op een automatische herstart.
 
 De controles volgen de ingebouwde tijden van de Q Duo-firmware van OpenQuatt-revisie `31282d13`. Bij minder dan `400 L/h` verwacht de proef de lowflowfout na `60 s`. Bij herstelde flow verwacht hij vrijgave na `30 s`. De beveiliging evalueert de flow elke `5 s`. Een draaiende compressor moet na een bevestigde stop minstens `240 s` uit blijven, ook als de flow eerder is hersteld. Voor de unit in defrost meet de runner die tijd vanaf haar stopmelding. Voor de andere unit gebruikt hij het meetpunt waarop beide compressoren stilstonden. Firmware met een ander beleid vereist bijbehorende verwachtingen in `scripts/native_spi/lowflow.py`.
 
@@ -284,12 +309,12 @@ Met `--memory-max-drop-bytes 4096` geef je bijvoorbeeld per waarde en per fase e
 ```sh
 oq_dev_bin="/pad/naar/dev-q-duo.factory.bin"
 oq_pr_bin="/pad/naar/pr-q-duo.factory.bin"
-python3 -m scripts.native_spi.run --scenario pr-memory --firmware "$oq_dev_bin" \
+python3 -m scripts.native_spi.run --backend cosim --scenario pr-memory --firmware "$oq_dev_bin" \
   --name pr-memory-dev
 
 oq_dev_report="/pad/naar/de/dev-run/report.json"
 oq_dev_sha="SHA-256-uit-het-buildmanifest-van-de-gekozen-dev-bin"
-python3 -m scripts.native_spi.run --scenario pr-memory --firmware "$oq_pr_bin" \
+python3 -m scripts.native_spi.run --backend cosim --scenario pr-memory --firmware "$oq_pr_bin" \
   --memory-baseline "$oq_dev_report" --memory-baseline-firmware-sha256 "$oq_dev_sha" \
   --name pr-memory-pr
 ```
@@ -314,7 +339,7 @@ De samenvatting toont de spreiding tussen de meetparen. Een gedeeld baselinerapp
 
 ## 5. Het resultaat lezen
 
-Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde map onder `.tmp/native-spi/runs/`. De status `PASS_NATIVE_EXTENSION` hoort bij een volledig geslaagde proef. Bij `NOT_QUALIFIED` geven `failure_reasons` en `qualification` aan welke controles ontbreken of faalden. Bij `STOPPED` is de proef voortijdig gestopt.
+Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde map onder `.tmp/native-spi/runs/`. Bij een geslaagde proef geeft de CLI exitcode 0 en meldt het rapport `PASS_COSIM` of `PASS_NATIVE_EXTENSION`, afhankelijk van de backend. Bij `NOT_QUALIFIED` geven `failure_reasons` en `qualification` aan welke controles ontbreken of faalden. Bij `STOPPED` is de proef voortijdig gestopt.
 
 | Controle | Waar je op let in `report.json` |
 | --- | --- |

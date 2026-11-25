@@ -1,33 +1,60 @@
 # OpenQuatt Emulator
 
-Lokale desktopwerkbank en CLI om een samengevoegde Q Duo-factory-bin op een virtuele ESP32-S3 te draaien. De runner test firmwareboot, de echte OpenQuatt web-app, de PT1000 en Modbus-verkeer met beide buitenunits. De emulator gebruikt de gekozen bin als flashimage. Een firmware-ELF of debuggerbrug is overbodig.
+Start een OpenQuatt Q Duo-factory-bin op een virtuele ESP32-S3. Test de OpenQuatt web-app, beide buitenunits, de PT1000 en digitaal OpenTherm. Geef de samengevoegde `*.factory.bin` van een release of eigen build op. De emulator gebruikt per proef een eigen flashkopie. Voor de gewone firmwareproeven volstaat die bin.
 
-## Installatie en gebruik
+## Aan de slag
 
-Op Ubuntu en Apple Silicon draait de CLI via co-simulatie met esp-emu 1.2.0. Het profiel `uitgebreid` test webbelasting en geheugen, softwareherstart, netwerk, HTTPS, Power House, lowflowherstel en stooklijn. Voor Windows is er een WSL2-route. Power House, lowflowherstel en stooklijn zijn via co-simulatie beschikbaar met de gewone Q Duo-factory-bin. De desktopwerkbank en de overige regelscenario’s gebruiken de lokale macOS-backend. [Installatie en profielkeuze](docs/handleiding.md#linux-en-windows-met-wsl2)
+| Waar | Hoe |
+| --- | --- |
+| **Ubuntu x64 of arm64, macOS met Apple Silicon** | Gebruik de CLI met `--backend cosim` en esp-emu 1.2.0. [Installatie en eerste rooktest](docs/handleiding.md#1-installeren) |
+| **Windows** | Volg de Ubuntu-route in WSL2. Een afzonderlijke WSL2-validatie staat nog open. [WSL2-instructies](docs/handleiding.md#linux-en-windows-met-wsl2) |
+| **Desktopwerkbank op Apple Silicon** | Start `python3 -m scripts.native_spi.server` na installatie van de native backend. Open de [werkbank](http://127.0.0.1:19450/) voor Wi-Fi, Ethernet en netwerkterugval. [Werkbank gebruiken](docs/handleiding.md#3-een-proef-draaien-in-de-desktopwerkbank) |
 
-De handleiding behandelt installatie op macOS arm64, het kiezen van een Q Duo-factory-bin en de drie netwerkproeven. De CLI biedt ook een dynamische proef met OTT, OTB, compressor, flow en defrost. Je vindt er uitleg bij het rapport en oplossingen voor veelvoorkomende problemen. [Lees de handleiding](docs/handleiding.md)
+Voor Ethernet en netwerkterugval heb je de Q Duo-factory-bin met W5500-ondersteuning nodig. Zie [De juiste firmware kiezen](docs/handleiding.md#2-de-juiste-firmware-kiezen).
 
-Start op macOS na de installatie de werkbank vanuit deze repo.
+## Wat kun je testen?
 
-```sh
-python3 -m scripts.native_spi.server
-```
+Het GitHub-profiel `uitgebreid` draait zes firmwareproeven op Ubuntu. Met de CLI kun je dezelfde proeven kiezen.
 
-Open [de simulatorwerkbank](http://127.0.0.1:19450/) om een factory-bin te kiezen.
+| Proef | Wat wordt gecontroleerd |
+| --- | --- |
+| **Webbelasting en geheugen** | Boot, Wi-Fi, web-app, PT1000 en Modbus met beide buitenunits. Meet vrije interne heap, heapmin en het grootste vrije blok tijdens gelijktijdige SSE en downloads. |
+| **Softwareherstart** | De firmware start opnieuw en leest de eerder opgeslagen instelling terug. |
+| **Ethernet en NTP** | W5500, DHCP, webtoegang en synchronisatie met een lokale klok. |
+| **Ethernet → Wi-Fi** | De virtuele kabel valt weg en de web-app wordt via Wi-Fi weer bereikbaar. |
+| **HTTPS** | Lokaal weer- en manifestverkeer, een afgebroken TLS-verbinding en herstel onder webbelasting. |
+| **Flowverlies tijdens defrost** | Compressorstop, vrijgave na flowherstel en herstart na de minimum-uit-tijd. |
 
-Voor de virtuele dagmeting met OpenTherm-ketel en GPIO-flow is er een aparte labbuild met regressietests. [Dagmeting met ketelwarmte](docs/ketelproef.md)
+De lange [Power House- en stooklijnproeven](docs/ubuntu-scenarios.md#power-house) draai je lokaal met de CLI. Je kunt daar ook de [digitale OpenTherm-uitwisseling met thermostaat en ketel](docs/handleiding.md#compressor-flow-en-defrost-met-opentherm) draaien via co-simulatie. De native macOS-backend biedt aanvullende proeven, onder meer voor ODU-respons, bronuitval, Modbus-uitval, koelen, MQTT, OTA en energiehistorie. De [scenariogids](docs/scenarios.md#pr-tests-kiezen) helpt bij het kiezen van een proef.
 
-De CLI biedt een Power House-basisproef met normale vraagopbouw en -afbouw, Single/Duo-overgangen en drie temperatuurprofielen. Er zijn aanvullende proeven voor gemeten ODU-respons en tijdelijke ODU-fasen, een aparte stooklijnproef en lokale HTTPS met foutinjectie en herstel. De HTTPS-succesproef gebruikt een afzonderlijke test-CA-build. **Onbekende CA afwijzen** controleert de TLS-testopstelling met de gewone factory-bin. De [scenariohandleiding](docs/scenarios.md) beschrijft testkeuze, opdrachten en dekkingsgrenzen.
+## Testuitslagen
 
-De gewone Q Duo-bin gebruikt zijn RMT-ontvangers voor de [digitale uitwisseling met thermostaat en ketel](docs/handleiding.md#opentherm-uitval-en-herstel-op-ubuntu).
+Op **23 november 2026** doorliepen Power House en stooklijn alle regelfasen op Ubuntu x86-64 met OpenQuatt `89e28f5` en esp-emu 1.2.0. **Stooklijn slaagde. Power House kreeg afkeur door één te laat Modbus-antwoord.** [Hertest en diagnose](docs/ubuntu-scenarios.md#hertest-power-house-en-stooklijn)
 
-De CLI biedt ook vaste proeven voor defrostketelhulp, OpenTherm-setpointgrenzen, herstart en OTA op een eigen flashkopie, geheugen tijdens een export, bronuitval, Modbus-uitval, dauwpuntbeveiliging, MQTT-herverbinding onder webbelasting en de uur- en daggrens van de energiehistorie. [Kies een proef bij je wijziging](docs/scenarios.md#pr-tests-kiezen)
+De rooktest met webbelasting en geheugen slaagde diezelfde dag op `main` met dezelfde OpenQuatt-revisie. [Rooktest](https://github.com/jeroen85/openquatt-emulator/actions/runs/45243760553)
+
+Op **20 november 2026** slaagden **zes van de acht** proeven van `uitgebreid` op Ubuntu x86-64 met esp-emu 1.2.0 en OpenQuatt `f0da4507`. Power House bereikte geen stabiele eerste Single-fase. De stooklijn doorliep alle fasen en kreeg afkeur door twee te late Modbus-antwoorden. Zeven proeven deelden de gewone Q Duo-bin. HTTPS gebruikte een aparte testbuild met een lokale CA. [Uitslagen per proef](docs/ubuntu-scenarios.md#validatie-met-esp-emu-120) · [GitHub-run](https://github.com/jeroen85/openquatt-emulator/actions/runs/44801606553)
+
+De [vroege netwerkmetingen](docs/handleiding.md#referentiemeting-ethernet-en-terugval) horen bij de oorspronkelijke Ethernet-validatie op macOS. Gebruik fysieke HIL voor elektrische signalen, een fysieke power-on en de werkelijke geheugen- en timingmarges. [Dekkingsgrenzen](docs/handleiding.md#7-wanneer-fysieke-hil-nodig-blijft)
+
+## GitHub Actions
+
+- **PR in deze emulatorrepo.** Zonder HIL-label draait `basis` op Ubuntu x64. Voeg bijvoorbeeld `hil:https` toe voor HTTPS of `hil:regeling` voor flowverlies tijdens defrost. De bot plaatst één uitslag bij de PR, met firmwarehashes en beschikbare geheugencijfers.
+- **PR in OpenQuatt.** Open [Actions → Virtual HIL → Run workflow](https://github.com/jeroen85/openquatt-emulator/actions/workflows/virtual-hil.yml) in deze repo en zet `openquatt_ref` op `refs/pull/<nummer>/merge`. Kies een profiel en lees de uitslag in de Actions-run.
+
+De geselecteerde proeven draaien één keer achter elkaar op dezelfde Ubuntu-runner. De gewone Q Duo-bin wordt gedeeld. Voor HTTPS volgt één aparte testbuild. Een geheugenbaseline vraagt alleen een extra build bij een andere OpenQuatt-revisie. Reserveer voor `uitgebreid` circa 40 minuten testtijd, plus de firmwarebuilds. [Profielkeuze, baseline en PR-rapport](docs/scenarios.md#firmwareproeven-op-github)
 
 ## Emulatorcode testen
 
+De Python-suite draait op Ubuntu en macOS.
+
 ```sh
 python3 -m unittest discover -s scripts/native_spi -t . -p 'test_*.py'
+```
+
+De C++-tests controleren de modellen en het harnas. Zie de stap **Test the native models** in de [GitHub-workflow](.github/workflows/virtual-hil.yml) voor Ubuntu. Op macOS voer je ze zo uit:
+
+```sh
 mkdir -p .tmp/native-spi
 oq_sdk="$(xcrun --sdk macosx --show-sdk-path)"
 xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++17 \
@@ -39,40 +66,8 @@ xcrun clang++ -isysroot "$oq_sdk" -isystem "$oq_sdk/usr/include/c++/v1" -std=c++
 .tmp/native-spi/test_scenarios
 ```
 
-## Ubuntu-proeven voor HTTPS en regeling
+## Modellen en herkomst
 
-[HTTPS, Power House, lowflowherstel en stooklijn](docs/ubuntu-scenarios.md)
-draaien via de draagbare backend met geheugenmetingen en gelijktijdige
-SSE-/webbelasting. De regelproeven gebruiken de gewone Q Duo-bin.
-HTTPS gebruikt een afzonderlijke lokale test-CA-build.
+De emulator koppelt MAX31865 via SPI3/GDMA en W5500 via SPI2/GDMA. De W5500-fixture modelleert onder meer MACRAW, RX/TX-ringen, PHY-status en GPIO9-interrupts. De firmware handelt DHCP en TCP/IP zelf af. Bij co-simulatie levert esp-emu de virtuele klok en RMT-ontvangst voor OpenTherm. De native macOS-backend gebruikt versiegebonden MMIO-functies en de S3-interruptmatrix.
 
-## GitHub Actions
-
-De workflow [Virtual HIL](.github/workflows/virtual-hil.yml) draait standaard één Q Duo-rooktest met geheugenmeting onder webbelasting op Ubuntu x64. Met PR-labels zoals `hil:https`, `hil:regeling` en `hil:stooklijn` kies je extra proeven. `hil:uitgebreid` voert alle acht proeven uit. Meerdere profielen draaien ontdubbeld achter elkaar op één Ubuntu-runner.
-
-
-Op een emulator-PR draait `basis` bij openen en na nieuwe commits. Voeg bijvoorbeeld
-`hil:https` of `hil:regeling` toe om gericht te testen. Voor een OpenQuatt-firmware-PR
-start je [Virtual HIL in Actions](https://github.com/jeroen85/openquatt-emulator/actions/workflows/virtual-hil.yml)
-met `openquatt_ref=refs/pull/<nummer>/merge`. De uitslag van die handmatige run staat in Actions.
-
-De basis- en regelproeven delen één gewone Q Duo-bin. Alleen HTTPS vraagt een extra testbuild met een lokale CA. Een andere geheugenbaseline vraagt pas een extra build als hij naar een andere OpenQuatt-commit verwijst. De uitslag verschijnt automatisch als PR-reactie, inclusief de firmwarehashes. De skill blijft lokaal. [Profielen, buildkeuze en rapportage](docs/scenarios.md#firmwareproeven-op-github)
-
-## Gevalideerd met een ongewijzigde Q Duo-bin
-
-De twee proeven gebruikten dezelfde factory-bin van OpenQuatt-dev `31282d13`. De SHA-256 van de invoer en de flashkopie bleef gelijk.
-
-| Proef | Duur | Web-app | Modbus |
-| --- | --- | --- | --- |
-| Ethernet bij koude start | 90 s | DHCP op `10.42.0.15`, 27 geslaagde controles | 80/80 antwoorden |
-| Ethernet → Wi-Fi | 180 s | Ethernet-HTTP viel weg. Na 55,5 s herstelde HTTP via Wi-Fi op `192.168.4.2`, gevolgd door 26 geslaagde vervolgcontroles. | 140/140 antwoorden |
-
-Beide buitenunits antwoordden in beide proeven. De firmware gaf geen crashes of Modbus-timingwaarschuwingen. De hersteltijd is gemeten op de host tijdens de virtuele proef.
-
-## Model en bereik
-
-De uitbreiding modelleert SPI3/GDMA voor MAX31865 en SPI2/GDMA voor de W5500. Het W5500-model biedt socket 0 in MACRAW-modus, RX/TX-ringen, PHY-status en GPIO9-interrupts. De ESP-IDF-driver voert zelf DHCP en TCP/IP uit. De firmware gebruikt de normale provisioning- en herstelpaden.
-
-De hostuitbreiding gebruikt versiegebonden MMIO-entrypoints en de S3-interruptmatrix van een lokale, ad hoc ondertekende kopie van esp-emu. Een andere emulatorbuild heeft een eigen compatibiliteitscontrole nodig. Het model gebruikt de virtuele SYSTIMER als ODU-klok en koppelt digitale OpenTherm-peers aan de native RMT-ontvanger. Metingen van elektrische timing en fysieke geheugenmarges horen bij fysieke HIL.
-
-De buitenunitfixture bouwt uit de meegeleverde GPLv3-broncode van OpenQuatt-Simulator. De oorspronkelijke revisie en hashes staan in [de herkomstgegevens](scripts/native_spi/vendor/odu/provenance.json). Firmwarebeelden, emulatorbestanden en lokale meetlogs blijven in de genegeerde runtimeomgeving.
+De buitenunitfixture bouwt uit de meegeleverde GPLv3-broncode van OpenQuatt-Simulator. De revisie en hashes staan in de [herkomstgegevens](scripts/native_spi/vendor/odu/provenance.json). Firmwarebeelden, emulatorbestanden en meetlogs staan lokaal onder `.tmp/native-spi/`.

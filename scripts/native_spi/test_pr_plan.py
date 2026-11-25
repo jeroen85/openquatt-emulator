@@ -3,18 +3,19 @@ from pathlib import Path
 import re
 import unittest
 
-from .pr_plan import LINUX_RUNNERS, PROFILE_LABELS, event_candidate_ref, event_selection, labeled_ref, workflow_plan
-from .pr_profiles import COSIM_PROFILES, HIL_LABELS, HOSTED_CASES, selected_cases
+from .pr_plan import (HIL_LABELS, HOSTED_PROFILES, LINUX_RUNNERS, PROFILE_LABELS,
+                      event_candidate_ref, event_selection, labeled_ref, workflow_plan)
+from .pr_profiles import selected_cases
 
 
 class WorkflowPlanTest(unittest.TestCase):
     def test_all_selections_use_one_ubuntu_runner(self):
         for architecture, runner in LINUX_RUNNERS.items():
-            for profile in COSIM_PROFILES:
+            for profile in HOSTED_PROFILES:
                 with self.subTest(architecture=architecture, profile=profile):
                     plan = workflow_plan(profile, architecture, "a" * 40)
                     self.assertEqual(plan["runner"], runner)
-                    self.assertEqual(plan["profiles"], profile)
+                    self.assertEqual(plan["profiles"], HOSTED_PROFILES[profile])
                     self.assertEqual(plan["baseline"], "")
                     self.assertEqual(plan["label"], PROFILE_LABELS[profile])
                     self.assertGreaterEqual(int(plan["timeout_minutes"]), 30)
@@ -23,19 +24,19 @@ class WorkflowPlanTest(unittest.TestCase):
         first = workflow_plan("netwerk,https,regeling,herstart,regeling", "arm64", "a" * 40, "b" * 40)
         second = workflow_plan("regeling,herstart,https,netwerk", "arm64", "a" * 40, "b" * 40)
         self.assertEqual(first, second)
-        self.assertEqual(first["profiles"], "herstart,netwerk,https,regeling")
+        self.assertEqual(first["profiles"], "herstart,netwerk,https,lowflow")
         self.assertEqual(first["lab"], "true")
 
     def test_all_probes_share_one_session_and_same_revision_needs_no_extra_baseline(self):
         plan = workflow_plan("uitgebreid", "x64", "a" * 40, "a" * 40)
         self.assertEqual(plan["baseline"], plan["candidate"])
-        self.assertEqual(selected_cases("uitgebreid", "cosim"), HOSTED_CASES)
+        self.assertEqual(selected_cases(plan["profiles"], "cosim"),
+                         ("geheugen", "herstart", "ethernet-ntp", "ethernet-failover", "https", "lowflow"))
         self.assertEqual(plan["lab"], "true")
-        self.assertGreater(int(plan["timeout_minutes"]), 145)
-        self.assertLess(int(plan["timeout_minutes"]), 360)
+        self.assertLess(int(plan["timeout_minutes"]), 110)
 
     def test_basic_profiles_do_not_request_a_lab_build(self):
-        for profile in ("basis", "herstart", "netwerk", "herstart,netwerk", "regeling", "stooklijn", "regeling-kern"):
+        for profile in ("basis", "herstart", "netwerk", "herstart,netwerk", "regeling"):
             self.assertEqual(workflow_plan(profile, "x64", "a"*40)["lab"], "false")
         for profile in ("https", "https,regeling"):
             self.assertEqual(workflow_plan(profile, "x64", "a"*40)["lab"], "true")
@@ -60,17 +61,18 @@ class WorkflowPlanTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hil:base"):
             labeled_ref(event, "base")
 
-    def test_regulation_retry_selects_two_cases_without_the_https_build(self):
-        event = {"pull_request": {"labels": [{"name": "hil:regeling-kern"}]}}
-        selection = event_selection(event)
-        self.assertEqual(selected_cases(selection, "cosim"), ("power-house", "stooklijn"))
-        self.assertEqual(workflow_plan(selection, "x64", "a" * 40)["lab"], "false")
-        with self.assertRaisesRegex(ValueError, "geheugenreferentie"):
-            workflow_plan(selection, "x64", "a" * 40, "b" * 40)
+    def test_hosted_regulation_selects_lowflow_and_keeps_local_regulation_profiles(self):
+        event = {"pull_request": {"labels": [{"name": "hil:regeling"}]}}
+        plan = workflow_plan(event_selection(event), "x64", "a" * 40, "b" * 40)
+        self.assertEqual(selected_cases(plan["profiles"], "cosim"), ("geheugen", "lowflow"))
+        self.assertEqual(plan["lab"], "false")
+        self.assertEqual(plan["baseline"], "b" * 40)
+        self.assertEqual(selected_cases("regeling-kern", "cosim"), ("power-house", "stooklijn"))
+        self.assertEqual(selected_cases("regeling", "cosim"), ("geheugen", "power-house", "lowflow"))
 
     def test_local_or_invalid_profiles_never_generate_hosted_jobs(self):
         for selection in ("", "basis,", "alles", "energie", "modbus", "basis,modbus",
-                          "basis,uitgebreid", "unknown", "https;echo bad"):
+                          "basis,uitgebreid", "stooklijn", "regeling-kern", "https,stooklijn", "unknown", "https;echo bad"):
             with self.subTest(selection=selection), self.assertRaises(ValueError):
                 workflow_plan(selection, "x64", "a" * 40)
         with self.assertRaises(ValueError): workflow_plan("basis", "amd64", "a"*40)
@@ -79,6 +81,8 @@ class WorkflowPlanTest(unittest.TestCase):
     def test_pr_labels_select_the_same_profiles_without_shell_interpolation(self):
         def event(*labels): return {"pull_request": {"labels": [{"name": x} for x in labels]}}
         self.assertEqual(event_selection(event("documentation")), "basis")
+        self.assertEqual(event_selection(event("hil:stooklijn", "hil:regeling-kern")), "basis")
+        self.assertEqual(event_selection(event("hil:regeling-kern", "hil:netwerk")), "netwerk")
         self.assertEqual(event_selection(event("hil:https", "hil:regeling")), "https,regeling")
         self.assertEqual(event_selection(event("hil:https", "hil:uitgebreid")), "uitgebreid")
 
@@ -91,5 +95,5 @@ class WorkflowPlanTest(unittest.TestCase):
         self.assertTrue(label_lists)
         for labels in label_lists: self.assertEqual(set(labels), set(HIL_LABELS))
         choices = [value.split(", ") for value in re.findall(r"options: \[([^]]+)\]", text)]
-        self.assertIn(list(COSIM_PROFILES), choices)
+        self.assertIn(list(HOSTED_PROFILES), choices)
         self.assertNotIn("macos-", text)

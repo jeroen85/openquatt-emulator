@@ -9,10 +9,21 @@ from pathlib import Path
 import re
 import sys
 
-from .pr_profiles import (BASE, COSIM_PROFILES, COSIM_SECONDS, HIL_LABELS, LAB_CASES, PROFILE_LABELS,
-                          selected_cases, selected_profiles)
+from .pr_profiles import BASE, COSIM_SECONDS, LAB_CASES, selected_cases, selected_profiles
 
 LINUX_RUNNERS = {"x64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+HOSTED_PROFILES = {
+    "basis": "basis",
+    "herstart": "herstart",
+    "netwerk": "netwerk",
+    "https": "https",
+    "regeling": "lowflow",
+    "uitgebreid": "herstart,netwerk,https,lowflow",
+}
+PROFILE_LABELS = {"basis": "rooktest en geheugen", "herstart": "softwareherstart",
+                  "netwerk": "Ethernet en Wi-Fi-terugval", "https": "HTTPS en herstel",
+                  "regeling": "flowverlies en herstel", "uitgebreid": "alle GitHub-proeven"}
+HIL_LABELS = {"hil:" + name: name for name in HOSTED_PROFILES}
 
 
 def workflow_plan(selection, architecture, candidate, baseline=None):
@@ -20,7 +31,10 @@ def workflow_plan(selection, architecture, candidate, baseline=None):
         raise ValueError("Kies x64 of arm64 voor de Linux-runner.")
     baseline = baseline or None
     profiles = selected_profiles(selection)
-    cases = selected_cases(selection, "cosim")
+    if any(profile not in HOSTED_PROFILES for profile in profiles):
+        raise ValueError("Kies een GitHub-profiel. Power House en stooklijn draaien lokaal.")
+    suite_selection = ",".join(HOSTED_PROFILES[profile] for profile in profiles)
+    cases = selected_cases(suite_selection, "cosim")
     if not re.fullmatch(r"[0-9a-f]{40}", candidate) or (baseline and not re.fullmatch(r"[0-9a-f]{40}", baseline)):
         raise ValueError("Het bouwplan vereist volledige OpenQuatt-commit-SHA's.")
     label = PROFILE_LABELS[profiles[0]] if len(profiles) == 1 else "geselecteerde Ubuntu-proeven"
@@ -33,8 +47,8 @@ def workflow_plan(selection, architecture, candidate, baseline=None):
         seconds += 285
     # Include provisioning, builds and teardown. Test timers are never shortened.
     timeout = math.ceil(seconds / 60) + 35 + (25 if lab else 0) + (25 if baseline and baseline != candidate else 0)
-    key = hashlib.sha256(json.dumps([profiles, architecture, candidate, baseline]).encode()).hexdigest()[:16]
-    return {"profiles": ",".join(profiles), "runner": LINUX_RUNNERS[architecture], "label": label,
+    key = hashlib.sha256(json.dumps([suite_selection.split(","), architecture, candidate, baseline]).encode()).hexdigest()[:16]
+    return {"profiles": suite_selection, "runner": LINUX_RUNNERS[architecture], "label": label,
             "candidate": candidate, "baseline": baseline or "", "lab": str(lab).lower(),
             "artifact_key": key, "timeout_minutes": str(timeout)}
 

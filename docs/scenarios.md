@@ -1,8 +1,8 @@
 # Vaste regressiescenario’s
 
-Gebruik deze CLI-proeven voor wijzigingen aan onder meer Power House, stooklijnbedrijf, OpenTherm, herstarts en netwerkverkeer. De firmwareproeven laden de gekozen Q Duo-factory-bin rechtstreeks. De lokale HTTPS-succesproef vraagt een testbuild met een eigen test-CA. De draagbare backend gebruikt de gewone Q Duo-bin voor OpenTherm en de regelproeven. Een ELF of debugger is voor geen van deze runs nodig.
+Kies een proef op basis van de wijziging die je wilt beoordelen. De gewone firmwareproeven starten met de gekozen Q Duo-factory-bin. De HTTPS-succesproef heeft een aparte testbuild met een lokale CA. De [dagmeting met ketelwarmte](ketelproef.md) gebruikt haar eigen labbuild en runner.
 
-Kies de exacte bronrevisie, bouw `configs/heatpump_controller_q/duo.yaml` en bewaar de bronrevisie, configuratie, ESPHome-/ESP-IDF-versie en SHA-256 van de factory-bin. De imagecontrole herkent de firmwareopbouw; zij bewijst de bronrevisie niet. De [installatiehandleiding](handleiding.md) beschrijft de runtime en poorten.
+Gebruik voor de gecombineerde Wi-Fi/Ethernet-bin `configs/heatpump_controller_q/duo.yaml` uit de gewenste OpenQuatt-revisie. Bewaar de bronrevisie, configuratie, ESPHome- en ESP-IDF-versie en SHA-256 van de bin. De runner controleert de firmwareopbouw. De bronrevisie leg je zelf vast met het bouwmanifest. Zie de [installatiehandleiding](handleiding.md) voor de runtime en poorten.
 
 Voer de opdrachten uit vanuit de emulatorrepo en stel het pad naar de gekozen gewone factory-bin in.
 
@@ -12,7 +12,7 @@ oq_firmware="/pad/naar/firmware.factory.bin"
 
 ## PR-tests kiezen
 
-Begin bij een firmware-PR met de rooktest `compatibility` van 90 s. Kies daarna de proeven die passen bij de wijziging. Een wijziging aan alleen documentatie vraagt geen firmwareproef. Deze indeling beschrijft de testkeuze; er wordt hiermee geen automatische GitHub-workflow ingesteld.
+Begin lokaal met `compatibility` of kies op GitHub `basis` voor een rooktest met geheugenmeting. Kies aanvullingen uit de tabel. Bij een wijziging aan alleen documentatie is firmwarevalidatie overbodig.
 
 Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warmtepompaansturing staan de Power House-proeven daarom voorop. De stooklijnproef onderzoekt de afzonderlijke modus `Water Temperature Control (heating curve)`.
 
@@ -22,8 +22,7 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | Power House-dispatch, vermogensinschatting of Single/Duo-keuze | Power House: gemeten ODU-respons (`odu-response`) | Reactie op het verschil tussen gevraagde en gemeten frequentie, Single-keuze en stop/herstart. |
 | Power House bij ontbrekende frequentie, opstartverhoging of oil return | Power House: tijdelijke ODU-fasen (`odu-transients`) | Benodigde capaciteit behouden tijdens de afwijking en terugkeren naar normaal bedrijf. |
 | Stooklijnregeling | `heating-curve` | RECOVERY/MAINTAIN, defrostblokkade, Duo-afbouw en stabiel Single. |
-| OpenTherm, compressor-, flow- of defrostkoppeling | `dynamics` | Digitale OTT/OTB-uitwisseling en de gekoppelde toestanden op macOS. |
-| OpenTherm op Ubuntu | [`dynamics` met co-simulatie](handleiding.md#opentherm-uitval-en-herstel-op-ubuntu) | Digitale communicatie met thermostaat en ketel, compressor, flow en defrost. |
+| OpenTherm, compressor-, flow- of defrostkoppeling | [`dynamics`](handleiding.md#compressor-flow-en-defrost-met-opentherm) | Digitale uitwisseling met thermostaat en ketel, compressor, flow, defrost en herstel. |
 | Lowflowbeveiliging of vrijgave na flowherstel | `lowflow` | Beveiligingsingreep en herstel met de vastgelegde firmwaretimers. |
 | Web, netwerk, buffers, taken of andere geheugenbeïnvloedende code | `pr-memory` met baseline en kandidaat | Vergelijkende heapmeting onder gelijktijdige web/SSE-belasting; volg de [handleiding](handleiding.md#geheugenproef-voor-een-pr). |
 | Weer-/manifestverzoeken, TLS-worker of gelijktijdige webactiviteit | `https` | Geslaagde TLS, serialisatie, verbinding afbreken en herstel met de lokale test-CA-build. |
@@ -39,7 +38,9 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | OTA, opslag, herstart of ODU-overname | [`restart`](#herstart-en-ota) | Nieuwe boot, bewaarde instelling en ODU-continuïteit, afhankelijk van de variant. |
 | Geheugen bij recorder- of Vooruitblik-export | [`pr-memory --memory-export`](#geheugen-tijdens-een-export) | Echte download tijdens webbelasting en gerichte meetdekking rond de overdracht. |
 
-**Dekking van Power House:** de basisproef gebruikt het normale frequentiebereik en de gewone ODU-modelrespons. De aanvullende routes `odu-response` en `odu-transients` blijven gerichte regressies met geïnjecteerde afwijkingen. De basisproef stuurt externe warmtevraag via de gewone API; zij kwalificeert daarmee nog niet het interne woningmodel, leren/voorspellen of elke combinatie van niveau en temperatuur.
+Op Ubuntu kies je `--backend cosim`. Die backend ondersteunt `compatibility` (inclusief Ethernet en terugval), `pr-memory`, `restart --restart-case software`, `dynamics`, `https`, `https-reject`, `power-house`, `lowflow` en `heating-curve`. Voor `pr-memory` en de softwareherstart gebruik je Wi-Fi. Voor HTTPS gebruik je Ethernet. Gebruik voor de overige proeven uit de tabel de native macOS-backend. De [Ubuntu-gids](ubuntu-scenarios.md) bevat de opdrachten voor HTTPS en regeling met co-simulatie.
+
+De Power House-basisproef gebruikt het normale frequentiebereik en de gewone ODU-modelrespons. De aanvullende routes `odu-response` en `odu-transients` blijven gerichte regressies met geïnjecteerde afwijkingen. De basisproef stuurt externe warmtevraag via de gewone API; zij kwalificeert daarmee nog niet het interne woningmodel, leren/voorspellen of elke combinatie van niveau en temperatuur.
 
 Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. Vergelijk dan baseline en kandidaat en leg de ontbrekende fase vast; zo’n bestaande afkeur is nog geen door de PR veroorzaakte regressie. De proef krijgt daarmee geen PASS.
 
@@ -47,24 +48,23 @@ Een gerichte proef kan gedrag vereisen dat nog niet in de gekozen baseline zit. 
 
 OpenQuatt gebruikt de gewone CI-checks en gerichte regressietests. Aanvullende HIL-proeven volgen het risico van de wijziging. De [PR-richtlijn](https://github.com/OpenQuatt/OpenQuatt/blob/dev/CONTRIBUTING.md#pull-request-validation) behandelt aansturing en hardware apart van runtimegeheugen.
 
-De GitHub-workflow in deze emulatorrepo draait standaard profiel **basis** op Ubuntu x64. Die run controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits, met vrije interne heap, heapmin en het grootste vrije blok vóór, tijdens en na overlappende SSE en downloads.
+De emulatorrepo draait automatisch `basis` op Ubuntu x64 voor een emulator-PR zonder HIL-profiellabel. De rooktest controleert boot, Wi-Fi, web-app, PT1000 en beide Modbus-buitenunits. De geheugenmeting bestrijkt rust, gelijktijdige SSE en downloads en herstel.
 
-Kies aanvullende proeven met een PR-label of via **Actions → Virtual HIL → Run workflow**. Labels blijven bij nieuwe commits actief; verwijder ze na de proef om onnodige herhaling te voorkomen. Een labelwijziging buiten deze lijst start geen firmwareproef en vervangt de bestaande PR-reactie niet.
+- **Emulator-PR.** Voeg een van de HIL-profiellabels toe. Labels blijven bij nieuwe commits actief. Verwijder extra labels als de gerichte proef klaar is. Alleen de profiellabels uit de tabel starten zelf een proef.
+- **OpenQuatt-firmware-PR.** Open [Actions → Virtual HIL → Run workflow](https://github.com/jeroen85/openquatt-emulator/actions/workflows/virtual-hil.yml) in deze repo. Vul `openquatt_ref` in met de volledige commit of `refs/pull/<nummer>/merge`. Lees de uitslag en rapporten in Actions.
 
 | Profiel / PR-label | Wat draait het profiel |
 | --- | --- |
 | `basis` / `hil:basis` | Alleen rooktest en geheugen onder webbelasting |
-| `herstart` / `hil:herstart` | Instelling opslaan, softwareherstart en opnieuw uitlezen |
-| `netwerk` / `hil:netwerk` | W5500-Ethernet, lokale NTP en terugval naar Wi-Fi |
-| `https` / `hil:https` | Weerdata en manifest, TLS-serialisatie, verbinding afbreken en herstel naast SSE en webdownloads |
-| `regeling` / `hil:regeling` | Power House-vraagopbouw/-afbouw, Single/Duo, stop/herstart en lowflow tijdens defrost met herstel |
-| `stooklijn` / `hil:stooklijn` | Defrostblokkade, Duo-inschakeling en afbouw naar stabiel Single |
-| `regeling-kern` / `hil:regeling-kern` | Alleen Power House en stooklijn op dezelfde gewone Q Duo-bin, zonder basisproef |
-| `uitgebreid` / `hil:uitgebreid` | Alle acht Ubuntu-proeven hierboven, inclusief één basisrun |
+| `herstart` / `hil:herstart` | Basis + instelling opslaan, softwareherstart en opnieuw uitlezen |
+| `netwerk` / `hil:netwerk` | Basis + twee netwerkproeven voor Ethernet/NTP en terugval naar Wi-Fi |
+| `https` / `hil:https` | Basis + HTTPS voor weer en manifest, afgebroken verbinding en herstel onder webbelasting |
+| `regeling` / `hil:regeling` | Basis + flowverlies tijdens defrost met herstel |
+| `uitgebreid` / `hil:uitgebreid` | Alle [zes GitHub-proeven](../README.md#wat-kun-je-testen), inclusief één basisrun |
 
-Meerdere labels combineren hun proeven. Bij een handmatige run kun je hetzelfde doen met `profiles`, bijvoorbeeld `https,regeling,stooklijn`. De selectie wordt ontdubbeld: een geselecteerde basis- en geheugenproef draait één keer en de gekozen firmwareproeven lopen achter elkaar op **één Ubuntu-runner**. `uitgebreid` kies je afzonderlijk; het label heeft voorrang op de andere HIL-labels.
+Gebruik bij een handmatige run `profile` voor één profiel. Met `profiles` kun je meerdere profielen combineren, bijvoorbeeld `https,regeling`. Op een emulator-PR kun je meerdere labels combineren. Elke geselecteerde proef draait één keer op dezelfde Ubuntu-runner. Kies `uitgebreid` afzonderlijk. Het label `hil:uitgebreid` heeft voorrang op andere HIL-profiellabels.
 
-Zonder `openquatt_ref` wordt bij het plannen de actuele OpenQuatt-`dev` opgehaald. Voeg op een emulator-PR één label `hil:ref:<volledige-commit-SHA>` toe om met dezelfde OpenQuatt-revisie te hertesten. Start daarna de proef met het gewenste HIL-profiel. Geef voor een firmware-PR de volledige commit of `refs/pull/<nummer>/merge` op. De planner zet de ref één keer om naar een commit-SHA; alle builds gebruiken daarna exact die revisie. `architecture` kiest x64 of arm64. Hetzelfde is beschikbaar via `workflow_call`.
+Zonder `openquatt_ref` wordt bij het plannen de actuele OpenQuatt-`dev` opgehaald. Voeg op een emulator-PR één label `hil:ref:<volledige-commit-SHA>` toe om met dezelfde OpenQuatt-revisie te hertesten. Start daarna de proef met het gewenste HIL-profiel. De planner zet de ref één keer om naar een commit-SHA; alle builds gebruiken daarna exact die revisie. `architecture` kiest x64 of arm64. Hetzelfde is beschikbaar via `workflow_call`.
 
 ### Gedeelde firmware en geheugen
 
@@ -75,9 +75,9 @@ worden achter elkaar gebouwd met maximaal twee compilerjobs.
 
 Gebruik de HTTPS-testbuild uitsluitend in de emulator. De TLS-CA en privésleutels worden op de testrunner gegenereerd en blijven daar. Ze worden niet als artefact geüpload. De volledige testsessie draait in een eigen Linux-netwerknamespace met alleen loopback; ook automatische achtergrondverzoeken van de firmware bereiken zo geen extern internet. Bouwen en runtime-installatie gebeuren daarvóór.
 
-Combineer `regeling-kern` met `basis` als je ook een geheugenbaseline wilt. Vul bij `baseline_ref` de gewenste referentie in voor de bestaande webgeheugenvergelijking. Bij dezelfde OpenQuatt-commit wordt de gewone kandidaatbin tweemaal gestart met een verse flashkopie. Alleen bij een andere commit volgt één extra gewone firmwarebuild. Baseline en kandidaat draaien achter elkaar op dezelfde host, vóór de aanvullende proeven. Een andere ESPHome-versie geeft afkeur van de vergelijking.
+Vul bij `baseline_ref` de gewenste referentie in voor de webgeheugenvergelijking. Bij dezelfde OpenQuatt-commit wordt de gewone kandidaatbin tweemaal gestart met een verse flashkopie. Alleen bij een andere commit volgt één extra gewone firmwarebuild. Baseline en kandidaat draaien achter elkaar op dezelfde host, vóór de aanvullende proeven. Een andere ESPHome-versie geeft afkeur van de vergelijking.
 
-Alle nieuwe proeven meten de vrije interne heap, heapmin sinds boot en het grootste vrije blok in hun eigen fasen. Die meetwaarden verschijnen in het volledige rapport. Dit zijn geen baselinevergelijkingen voor Power House, stooklijn of HTTPS. Werkelijke DRAM-, DMA- en stackmarges vragen fysieke HIL.
+Webbelasting, HTTPS, Power House, flowverlies tijdens defrost en stooklijn meten de vrije interne heap, heapmin sinds boot en het grootste vrije blok. In het rapport staan de waarden per fase. Alleen de webgeheugenproef vergelijkt automatisch met een baseline. Werkelijke DRAM-, DMA- en stackmarges vragen fysieke HIL.
 
 ### Automatische PR-reactie en duur
 
@@ -85,9 +85,9 @@ Na iedere voltooide automatische run voor een PR in deze emulatorrepo verschijnt
 
 De rapporteur draait vanaf vertrouwde `main` in een afzonderlijke `workflow_run` met schrijfrecht. De testworkflow heeft alleen leesrechten. Rapportartefacten worden als begrensde gegevens verwerkt; PR-code wordt niet met het schrijftoken uitgevoerd. Handmatige runs leveren een Actions-samenvatting en artefacten, maar plaatsen geen reactie op een willekeurige OpenQuatt-PR waarvan alleen een ref is gekozen.
 
-De gewone firmwaretimers blijven actief. Alleen al Power House, lowflow en stooklijn gebruiken 55, ruim 18 en 50 hostminuten; HTTPS gebruikt 7 minuten. `uitgebreid` vraagt ongeveer 2,5 uur testtijd plus bouwen. Kies bij gerichte wijzigingen de betreffende profielen. Een job die wegens GitHub-budget of runnerbeschikbaarheid niet start, is **geblokkeerd** en heeft geen firmwaretest uitgevoerd.
+De firmwaretimers blijven actief. `uitgebreid` vraagt op GitHub ongeveer 40 minuten testtijd plus builds. Flowherstel draait ruim 18 minuten en HTTPS 7 minuten. Kies voor een gerichte wijziging het bijbehorende profiel. Krijgt de job geen runner, dan ontbreekt een firmware-uitslag.
 
-De overige lokale scenario’s, zoals Modbus-uitval onder warmtevraag en energiehistorie, houden hun eigen kwalificatie. Deze uitbreiding voegt ze niet aan GitHub toe.
+Draai Power House en stooklijn lokaal met `--profile regeling-kern` of als losse scenario’s. Het lokale profiel `regeling` omvat Power House en flowherstel. Lokaal draait `uitgebreid` alle acht proeven met co-simulatie. Modbus-uitval onder warmtevraag en energiehistorie draaien lokaal op de native macOS-backend.
 
 ## Gerichte firmwareproeven
 

@@ -1,20 +1,23 @@
-# HTTPS en regeling op Ubuntu
+# HTTPS en regeling met co-simulatie
 
-De draagbare backend gebruikt esp-emu 1.2.0 en de lokale netwerk- en
-buitenunitmodellen. De proeven draaien de Q Duo-factory-bin rechtstreeks.
-De rapporten bevatten de firmwarehash, fixturebronnen, virtuele klok,
-Modbus-opdrachten en de controles per fase.
+Gebruik deze proeven voor wijzigingen aan HTTPS, Power House, flowbeveiliging
+of de stooklijn. De co-simulatiebackend gebruikt esp-emu 1.2.0 en draait ook
+op Apple Silicon. Het rapport bevat de firmwarehash, de bron van de modellen,
+de gastklok en de controles per fase.
 
-Installeer de Ubuntu-afhankelijkheden en runtime volgens de
-[handleiding](handleiding.md#linux-en-windows-met-wsl2). Voer de commando’s
-hieronder uit vanuit de emulatorcheckout.
+Installeer de [CLI en runtime](handleiding.md#1-installeren). Voer de opdrachten
+uit vanuit de emulatorrepo. Zie [de profielkeuze](scenarios.md#firmwareproeven-op-github)
+om HTTPS en flowherstel via GitHub te starten.
 
 ## Firmware klaarzetten
 
-Stel `oq_firmware` in op de gewone Q Duo-factory-bin van de gewenste
-OpenQuatt-revisie. Power House, lowflow en stooklijn gebruiken rechtstreeks de
-RMT-ontvangers van die firmware. Dat werkt vanaf
-[esp-emu 1.2.0](https://github.com/espressif/esp-emulator/releases/tag/v1.2.0).
+Gebruik de gewone Q Duo-factory-bin. Power House, flowherstel en stooklijn
+gebruiken de OpenTherm-ontvangers van de firmware. [esp-emu 1.2.0](https://github.com/espressif/esp-emulator/releases/tag/v1.2.0)
+ondersteunt deze RMT-ontvangst.
+
+```sh
+oq_firmware="/pad/naar/firmware.factory.bin"
+```
 
 Bouw voor de HTTPS-succesproef een aparte bin met een lokale test-CA.
 Volg de [HTTPS-receptuur](scenarios.md#https-volledig-lokaal) om de fixture
@@ -31,17 +34,16 @@ python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_firmware" \
 
 De normale vraagreeks loopt via Single naar Duo, bouwt weer af, stopt en
 start opnieuw. De minimumlooptijd van 300 s en minimum-uit-tijd van 240 s
-blijven actief. De normale ODU-respons en frequentietabel worden gebruikt.
-De temperatuurprofielen `mild`, `cold` en `warm-water` zijn afzonderlijke
-proeven. Het interne woningmodel en leren vragen eigen proeven.
+blijven actief. De virtuele buitenunits volgen hun normale frequentietabel.
+De profielen `mild`, `cold` en `warm-water` draaien als afzonderlijke proeven.
+Het woningmodel en het leergedrag vragen eigen proeven.
 
 Met de co-simulatiebackend wordt geheugen gemeten. De recorder levert
 de vrije interne heap, het minimum sinds boot en het grootste vrije blok
 bij opstarten, Single, Duo, stop en herstel. Tijdens de regelproef zijn
-een SSE-stream en herhaalde webbundeldownloads actief. Ieder gemeten
-bedrijfsvenster moet een geslaagde download met SSE-overlap bevatten.
-De runner bewaart de eventtijden en keurt eventgaten boven 12 gastseconden af. Een stille verbinding wordt heropend. Aan beide randen van elk bedrijfsvenster
-moet binnen 12 s een SSE-event zijn ontvangen.
+een SSE-stream en herhaalde webbundeldownloads actief. Voor ieder meetvenster
+vereist het rapport een geslaagde download binnen één SSE-stream. De
+[rapportcontrole](#rapport-beoordelen) bepaalt of de belasting aanhoudt.
 
 ## Power House met lowflowherstel
 
@@ -93,9 +95,9 @@ python3 -m scripts.native_spi.run --backend cosim --firmware "$oq_https_bin" \
 
 De Ethernet-fixture handelt DNS en NTP lokaal af en leidt de gekozen
 HTTPS-domeinen naar de eigen TLS-server. De firmware moet weergegevens
-accepteren en een nieuwe manifestrevisie publiceren. Een manifestaanvraag
-wordt tijdens de weerverbinding aangevraagd. Alle TLS-pogingen moeten
-aantoonbaar na elkaar worden uitgevoerd.
+accepteren en een nieuwe manifestrevisie publiceren. De proef vraagt het
+manifest op terwijl de weerverbinding nog open is. De TLS-worker moet de
+verbindingen één voor één afhandelen.
 
 Daarna verbreekt de fixture een manifestverbinding. Een expliciete nieuwe
 aanvraag moet een volgende publicatierevisie opleveren. Een SSE-stream en
@@ -105,8 +107,8 @@ aangevraagd; bij de regelproeven iedere 10 gastseconden. Iedere GET heeft
 een eigen deadline van maximaal 4 hostseconden. De recorder meet vóór de belasting,
 tijdens de succes-/fout-/herstelreeks en na herstel.
 
-`https-reject` blijft de afzonderlijke controle **Onbekende CA afwijzen**
-voor de testopstelling. Gebruik daarvoor een bin zonder de lokale CA.
+Gebruik voor [Onbekende CA afwijzen](scenarios.md#onbekende-ca-afwijzen) een
+gewone Q Duo-bin. Die afzonderlijke proef controleert de TLS-testopstelling.
 
 ## Rapport beoordelen
 
@@ -124,15 +126,17 @@ onder `qualification`.
   Q Duo-pinnen GPIO40 (TX) en GPIO42 (RX). De runner houdt de Modbus-timingcontrole
   van de firmware aan. De overige scenario’s gebruiken de afzonderlijke UART1-TCP-brug.
 - Bij vier seconden zonder SSE-event opent de runner opnieuw een stream. Een
-  eventgat boven 12 gastseconden geeft ook na herstel afkeur. Een download telt
-  alleen als overlappend als één stream hem volledig omsluit.
+  eventgat boven 12 gastseconden geeft ook na herstel afkeur. Aan beide randen
+  van elk meetvenster moet binnen 12 gastseconden een event vallen. Een download
+  telt alleen als overlappend als één stream hem volledig omsluit.
 - `scenario_load` bevat de SSE-/webbelasting van de regelproeven en de
   overlapcontroles per meetvenster.
 
-Deze proeven zijn via `run.py` en de Ubuntu-profielen `https`, `regeling`
-en `stooklijn` beschikbaar. Het profiel `uitgebreid` en de GitHub-workflow
-voegen ze toe aan de vier bestaande basisproeven. Zie de
-[profielkeuze en gedeelde builds](scenarios.md#firmwareproeven-op-github).
+Op GitHub kies je `https` voor HTTPS of `regeling` voor flowherstel.
+`uitgebreid` combineert die proeven met webgeheugen, softwareherstart en beide
+netwerkproeven. Power House en stooklijn draaien lokaal via de opdrachten
+hierboven of samen met `--profile regeling-kern` in de CLI. Zie de
+[profielkeuze](scenarios.md#firmwareproeven-op-github).
 
 Een onvoltooide fase of ontbrekende recorderdekking geeft afkeur. De
 10 s-sampling kan korte dips missen. Heapmin is het minimum sinds boot.
@@ -143,6 +147,51 @@ base t/m base +3. Meet baseline en kandidaat voor een geheugenvergelijking
 achter elkaar op dezelfde host met dezelfde configuratie en belasting.
 Noteer de architectuur en hostdeadlines. Verhoog bij een trage VM zo nodig
 de hostduur, terwijl de firmwaretimers en scenario-eisen blijven gelden.
+
+## Validatie met esp-emu 1.2.0
+
+### Hertest Power House en stooklijn
+
+Op 23 november 2026 draaide `regeling-kern` nog via GitHub op Ubuntu x86-64 met esp-emu 1.2.0
+en OpenQuatt-dev `89e28f5`. Beide proeven deelden dezelfde gewone Q Duo-bin.
+[GitHub-run en rapporten](https://github.com/jeroen85/openquatt-emulator/actions/runs/45246577482)
+
+| Proef | Uitslag |
+| --- | --- |
+| Power House-vraag en Single/Duo | Afgekeurd door één te laat Modbus-antwoord van HP2. Alle regelstappen, inclusief stabiel Single, Duo, stop en herstart, waren geslaagd. |
+| Stooklijn, defrostblokkade en Duo-afbouw | Geslaagd. Alle regelfasen en geheugenvensters waren compleet. De firmware gaf geen Modbus-timingwaarschuwingen. |
+
+Power House bleef na de herstart stabiel draaien. Ruim twaalf minuten nadat
+de herstartfase was afgerond, gaf de firmware bij één verzoek aan HP2 een
+timeout en wees het antwoord af. De ingestelde wachttijd is 100 ms. De
+firmware meldde de timeout na circa 113 ms en het late antwoord na circa
+116 ms. De virtuele buitenunits stuurden 2.254 antwoorden op 2.254 verzoeken.
+De runner keurt de proef af bij zo’n timingwaarschuwing. De metingen laten
+open waar de vertraging ontstond tussen aanvraag en ontvangst.
+
+### Volledige run van 20 november
+
+De GitHub-run van 20 november 2026 gebruikte Ubuntu x86-64, esp-emu 1.2.0
+en OpenQuatt `f0da4507`. De zeven gewone proeven deelden één factory-bin.
+HTTPS gebruikte de testbuild met een lokale CA. De run duurde 2 uur en 32
+minuten inclusief builds. [GitHub-run en artefacten](https://github.com/jeroen85/openquatt-emulator/actions/runs/44801606553) ·
+[Uitslag en geheugencijfers](https://github.com/jeroen85/openquatt-emulator/pull/13#issuecomment-7048580968)
+
+| Proef | Uitslag |
+| --- | --- |
+| Webbelasting en geheugen | Geslaagd |
+| Instellingen behouden na softwareherstart | Geslaagd |
+| W5500-Ethernet en lokale tijdsynchronisatie | Geslaagd |
+| Automatische terugval van Ethernet naar Wi-Fi | Geslaagd |
+| HTTPS, afgebroken verbinding en herstel | Geslaagd |
+| Power House-vraag en Single/Duo | Afgekeurd. De compressor startte bij 2.600 W en stopte toen de comfortstopgrens daalde naar de gesimuleerde kamertemperatuur van 21 °C. Stabiel Single-bedrijf bleef uit. |
+| Flowverlies tijdens defrost en herstel | Geslaagd |
+| Stooklijn, defrostblokkade en Duo-afbouw | Afgekeurd. Alle regelfasen werden doorlopen. De firmware wees twee Modbus-antwoorden af die na 112–113 ms binnenkwamen. |
+
+In de afzonderlijke OpenTherm-hertest ontving dezelfde ongewijzigde Q Duo-bin
+geldige frames van de thermostaat en de ketel op Ubuntu arm64 en macOS
+arm64. Die hertest volgde op de RMT-correctie in esp-emu 1.2.0.
+[Terugkoppeling bij Espressif](https://github.com/espressif/esp-emulator/issues/66#issuecomment-7072998967)
 
 ## Eerdere verificatie met esp-emu 1.1.0
 
@@ -163,6 +212,4 @@ de afzonderlijke test-CA-build. De invoerbins en flashkopieën bleven gelijk.
 Daarnaast zijn 176 Python-regressietests en beide C++-testsuites op Ubuntu
 geslaagd.
 
-Deze nieuwe scenario’s en hostdeadlines zijn nog niet op native Ubuntu
-x86-64 of WSL2 gekwalificeerd. De temperatuurprofielen `cold` en
-`warm-water` zijn in deze ronde niet opnieuw uitgevoerd.
+De temperatuurprofielen `cold` en `warm-water` zijn in deze ronde niet opnieuw uitgevoerd.

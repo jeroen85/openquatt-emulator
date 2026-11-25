@@ -1,5 +1,5 @@
 name: Virtual HIL
-run-name: ${{ github.event.action == 'labeled' && !contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:stooklijn","hil:regeling-kern","hil:uitgebreid"]'), github.event.label.name) && 'Virtuele HIL · Geen proef aangevraagd' || 'Virtual HIL' }}
+run-name: ${{ github.event.action == 'labeled' && !contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:uitgebreid"]'), github.event.label.name) && 'Virtuele HIL · Geen proef aangevraagd' || 'Virtual HIL' }}
 
 on:
   pull_request:
@@ -21,7 +21,7 @@ on:
         description: Aanvullende firmwareproeven
         type: choice
         default: basis
-        options: [basis, herstart, netwerk, https, regeling, stooklijn, regeling-kern, uitgebreid]
+        options: [basis, herstart, netwerk, https, regeling, uitgebreid]
       profiles:
         description: Meerdere profielen, kommagescheiden. Overschrijft profile.
         type: string
@@ -53,12 +53,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: virtual-hil-${{ github.ref }}-${{ inputs.profiles || inputs.profile || 'basis' }}-${{ inputs.openquatt_ref }}-${{ inputs.baseline_ref }}-${{ inputs.architecture || 'x64' }}-${{ github.event.action == 'labeled' && !contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:stooklijn","hil:regeling-kern","hil:uitgebreid"]'), github.event.label.name) && github.run_id || 'tests' }}
+  group: virtual-hil-${{ github.ref }}-${{ inputs.profiles || inputs.profile || 'basis' }}-${{ inputs.openquatt_ref }}-${{ inputs.baseline_ref }}-${{ inputs.architecture || 'x64' }}-${{ github.event.action == 'labeled' && !contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:uitgebreid"]'), github.event.label.name) && github.run_id || 'tests' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   plan:
-    if: ${{ github.event.action != 'labeled' || contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:stooklijn","hil:regeling-kern","hil:uitgebreid"]'), github.event.label.name) }}
+    if: ${{ github.event.action != 'labeled' || contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:uitgebreid"]'), github.event.label.name) }}
     name: Proeven en firmwareversies kiezen
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -107,7 +107,7 @@ jobs:
           python3 -B -m scripts.native_spi.pr_plan
 
   emulator-checks:
-    if: ${{ github.event.action != 'labeled' || contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:stooklijn","hil:regeling-kern","hil:uitgebreid"]'), github.event.label.name) }}
+    if: ${{ github.event.action != 'labeled' || contains(fromJSON('["hil:basis","hil:herstart","hil:netwerk","hil:https","hil:regeling","hil:uitgebreid"]'), github.event.label.name) }}
     name: Emulator controleren
     runs-on: ubuntu-24.04
     timeout-minutes: 8
