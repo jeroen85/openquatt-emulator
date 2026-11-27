@@ -30,7 +30,79 @@ static Bytes packet(int protocol, int src, int dst, size_t payload = 0) {
   put(b, 34, src);
   put(b, 36, dst);
   if (protocol == 17) put(b, 38, b.size() - 34);
+  if (protocol == 6) b[46] = 0x50;
   return b;
+}
+static void forwarded_connections() {
+  LocalServices local(0, 0, 19500, true);
+  const auto reply = [](const Bytes&) {};
+  const auto start = LocalServices::Clock::time_point{};
+  auto inbound = [&](int client, int server, uint8_t flags, uint32_t seq, uint32_t ack,
+                     auto now, int source_ip = 2, bool delivered = true) {
+    auto frame = packet(6, client, server);
+    frame[29] = source_ip;
+    frame[33] = 15;
+    frame[47] = flags;
+    put(frame, 38, seq >> 16);
+    put(frame, 40, seq);
+    put(frame, 42, ack >> 16);
+    put(frame, 44, ack);
+    check(local.incoming(frame, [=](const Bytes&) { return delivered; }, now) == delivered);
+  };
+  auto outbound = [&](int client, int server, uint8_t flags, uint32_t seq, uint32_t ack, auto now) {
+    auto frame = packet(6, server, client);
+    frame[47] = flags;
+    put(frame, 38, seq >> 16);
+    put(frame, 40, seq);
+    put(frame, 42, ack >> 16);
+    put(frame, 44, ack);
+    return !local.outgoing(frame, reply, 0, now);
+  };
+  auto connect = [&](int client, int server) {
+    inbound(client, server, 2, 100, 0, start);
+    check(!outbound(client, server, 16, 200, 101, start));
+    check(outbound(client, server, 18, 200, 101, start));
+    inbound(client, server, 16, 101, 201, start);
+  };
+
+  inbound(30000, 80, 16, 101, 201, start);
+  inbound(30000, 80, 2, 100, 0, start, 19);
+  check(!outbound(30000, 80, 18, 200, 101, start));
+  connect(30000, 80);  // Long-lived SSE remains active while short requests recycle.
+  connect(30000, 6053);
+  inbound(36000, 80, 2, UINT32_MAX, 0, start);
+  check(outbound(36000, 80, 18, 200, 0, start));
+  inbound(36000, 80, 2, UINT32_MAX, 0, start);  // A SYN retry preserves the wrapped ACK.
+  inbound(36000, 80, 16, 0, 201, start);
+  check(outbound(36000, 80, 16, 201, 0, start));
+  for (int port = 30001; port < 35001; ++port) {
+    connect(port, 80);
+    check(outbound(port, 80, 17, 201, 101, start));
+    inbound(port, 80, 16, 101, 202, start);
+    check(outbound(port, 80, 16, 202, 101, start));
+    inbound(port, 80, 17, 101, 202, start);
+    check(outbound(port, 80, 16, 202, 102, start));  // Pass the final ACK.
+    check(!outbound(port, 80, 16, 202, 102, start));
+  }
+  check(outbound(30000, 80, 16, 201, 101, start));
+  inbound(30000, 6053, 20, 101, 201, start);
+  check(!outbound(30000, 6053, 16, 201, 101, start));
+  check(!outbound(30000, 22, 16, 201, 101, start));
+  connect(30001, 80);  // Source ports can be reused after close.
+  connect(30002, 80);
+  inbound(30002, 80, 17, 101, 201, start);
+  check(outbound(30002, 80, 16, 201, 102, start));
+  check(outbound(30002, 80, 17, 201, 102, start));
+  inbound(30002, 80, 16, 102, 202, start, 2, false);
+  check(outbound(30002, 80, 17, 201, 102, start));
+  inbound(30002, 80, 16, 102, 202, start);
+  check(!outbound(30002, 80, 17, 201, 102, start));
+  inbound(30002, 80, 2, 100, 0, start);
+  check(!outbound(30002, 80, 18, 200, 101, start + std::chrono::seconds(31)));
+  check(outbound(30001, 80, 16, 201, 101, start + std::chrono::seconds(31)));
+  check(!outbound(30000, 80, 16, 201, 101, start + std::chrono::seconds(901)));
+  local.clear_forwarded_connections();
+  check(!outbound(30001, 80, 16, 201, 101, start + std::chrono::seconds(901)));
 }
 static uint16_t reg(void* h, uint16_t address) {
   uint16_t v = 0;
@@ -39,6 +111,7 @@ static uint16_t reg(void* h, uint16_t address) {
 }
 int main() {
   try {
+    forwarded_connections();
     LocalServices local(19499, 1794160000);
     Bytes response;
     auto reply = [&](const Bytes& b) { response = b; };
@@ -79,7 +152,7 @@ int main() {
     auto inbound = packet(6, 19500, 40000);
     inbound[29] = 2;
     inbound[33] = 15;
-    mqtt.incoming(inbound);
+    mqtt.incoming(inbound, [](const Bytes&) { return true; });
     check(inbound[34] * 256 + inbound[35] == 1883);
 
     Bytes query(12, 0);

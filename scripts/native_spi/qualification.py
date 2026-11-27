@@ -6,7 +6,7 @@ from .network_probe import ETHERNET_IP
 
 
 FUNCTIONAL_COMPLETION = {"restart", "defrost-assist", "ott-setpoint", "source-loss", "odu-link-loss", "dew-guard",
-                         "mqtt-reconnect", "energy-boundary"}
+                         "mqtt-reconnect", "energy-boundary", "cm98-fixed-pump", "odu-profile-recovery", "pump-postflow"}
 
 
 def qualify(report):
@@ -89,6 +89,11 @@ def qualify(report):
             and 0 <= guest_ms - odu_ms <= 1000 and 0 <= clock_age <= 10,
             "De ODU-modelklok liep onvoldoende mee met de firmware.",
         )
+    initial_checkout = report.get("emulator_checkout", {})
+    final_checkout = report.get("emulator_checkout_at_end", {})
+    if initial_checkout.get("revision"):
+        gates["emulator_revision_stable"] = (initial_checkout == final_checkout,
+                                             "De Git-revisie of werkboomstatus van de emulator veranderde.")
     if dynamics := report.get("dynamics"):
         wire = dynamics.get("wire", {})
         for link, ids, description in (
@@ -97,7 +102,8 @@ def qualify(report):
         ):
             if restart and dynamics.get("case") != "running":
                 continue  # Standby reset scenarios exercise flash and network lifecycle.
-            if link == "otb" and report.get("scenario") == "defrost-assist" and dynamics.get("case") != "ot":
+            if link == "otb" and (scenario == "odu-profile-recovery"
+                                  or (scenario == "defrost-assist" and dynamics.get("case") != "ot")):
                 continue  # Virtual OpenTherm boiler is physically absent in relay profiles.
             evidence = wire.get(link, {})
             last_ack_ms = evidence.get("last_ack_ms")
