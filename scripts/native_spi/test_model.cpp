@@ -293,6 +293,25 @@ int main() {
       check(!ethernet.link() && !ethernet.receive(frame.data(), frame.size()));
       ++cases;
     }
+    {  // Reset, close/reopen and PHY power-down invalidate forwarded TCP state.
+      W5500 ethernet;
+      unsigned resets = 0;
+      ethernet.on_interface_reset = [&] { ++resets; };
+      ethernet.cable = true;
+      ethernet.write(1, 0, 4);
+      ethernet.write(1, 1, 0x01);
+      check(resets == 1 && ethernet.link());
+      ethernet.write(1, 1, 0x10);
+      check(resets == 2);
+      ethernet.write(0, 0x2e, 0xf0);
+      check(resets == 3 && !ethernet.link());
+      ethernet.write(0, 0x2e, 0xf0);
+      ethernet.write(0, 0x2e, 0xb8);
+      check(resets == 3 && ethernet.link());
+      ethernet.write(0, 0, 0x80);
+      check(resets == 4);
+      ++cases;
+    }
     {
       namespace ot = esphome::virtual_opentherm::protocol;
       check(ot::self_test());

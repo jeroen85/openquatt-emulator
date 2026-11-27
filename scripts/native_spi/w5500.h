@@ -11,6 +11,7 @@ namespace oq_native {
 class W5500 {
  public:
   std::function<void(const uint8_t*, size_t)> transmit;
+  std::function<void()> on_interface_reset;
   uint64_t sent = 0;
   uint64_t received = 0;
   uint64_t dropped = 0;
@@ -74,7 +75,9 @@ class W5500 {
       if (address == 0 && (value & 0x80)) {
         reset();
       } else if (address == 0x2e) {
+        const bool had_link = link();
         common_[address] = value & 0xf8;
+        if (had_link && !link() && on_interface_reset) on_interface_reset();
       } else if (address < common_.size() && address != 0x39 && address != 0x17) {
         common_[address] = value;
       }
@@ -135,6 +138,7 @@ class W5500 {
     auto& regs = sockets_[0];
     regs[2] = regs[4] = regs[0x24] = regs[0x25] = regs[0x28] = regs[0x29] = 0;
     rx_write_ = rx_ack_ = tx_read_ = 0;
+    if (on_interface_reset) on_interface_reset();
   }
 
   void command(uint8_t value) {

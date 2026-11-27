@@ -58,18 +58,25 @@ from .export_memory import ExportMeasurement, EXPORT_PATHS
 from .safety_scenarios import DEW_CASES, DewGuard, OduLinkLoss, SourceLoss
 from .energy_boundary import CASES as ENERGY_CASES, EnergyBoundary, parse_history
 from .mqtt_reconnect import LocalBroker, MqttReconnect
+from .frost_pump import FixedFrostPump
+from .pump_postflow import PostflowFleet, PumpPostflow
+from .odu_profile_recovery import OduProfileRecovery, ProfilePeer
+from .provenance import emulator_checkout, firmware_source
 
 SCENARIOS = {"compatibility": 90, "dynamics": 420, "lowflow": 780, "pr-memory": 240,
              "heating-curve": 2400, "odu-response": 2100, "odu-transients": 2100,
              "https": 420, "https-reject": 240, "power-house": 2700,
              "defrost-assist": 1800, "ott-setpoint": 210, "restart": 340,
              "source-loss": 950, "odu-link-loss": 820, "dew-guard": 1100,
-             "mqtt-reconnect": 420, "energy-boundary": 900}
+             "mqtt-reconnect": 420, "energy-boundary": 900,
+             "cm98-fixed-pump": 300, "odu-profile-recovery": 1050, "pump-postflow": 900}
 DYNAMIC_SCENARIOS = {"dynamics": Dynamics, "lowflow": Lowflow, "heating-curve": HeatingCurve,
                      "odu-response": OduResponse, "odu-transients": OduTransients, "power-house": PowerHouse,
                      "defrost-assist": DefrostAssist, "ott-setpoint": ThermostatSetpoint, "restart": Restart,
                      "source-loss": SourceLoss, "odu-link-loss": OduLinkLoss, "dew-guard": DewGuard,
-                     "mqtt-reconnect": MqttReconnect, "energy-boundary": EnergyBoundary}
+                     "mqtt-reconnect": MqttReconnect, "energy-boundary": EnergyBoundary,
+                     "cm98-fixed-pump": FixedFrostPump, "odu-profile-recovery": OduProfileRecovery,
+                     "pump-postflow": PumpPostflow}
 
 ROOT = Path(__file__).resolve().parents[2]
 LAB = ROOT / ".tmp/native-spi"
@@ -164,7 +171,15 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         baseline_firmware_sha256=None, without_overlap=False, https_fixture=None, power_house_climate=None,
         assist_case=None, handover_variant=None, restart_case=None, ota_image=None, ota_python=None,
         memory_export=None, export_min_rows=None, export_probe=False, export_seed=False, dew_case=None,
-        energy_case=None, backend="native", ntp_epoch=None):
+        energy_case=None, backend="native", ntp_epoch=None,
+        firmware_revision=None, firmware_config=None, ha_api=False):
+    source = firmware_source(firmware_revision, firmware_config)
+    if ha_api and scenario != "mqtt-reconnect":
+        raise ValueError("--ha-api hoort bij mqtt-reconnect")
+    if ha_api:
+        from .ha_mqtt_probe import HaMqttReconnect, api_dependencies
+
+        api_dependencies()
     if ntp_epoch is not None and (backend != "cosim" or scenario != "compatibility" or network != "ethernet"
                                   or type(ntp_epoch) is not int or not 1700000000 <= ntp_epoch <= 2085976695
                                   or measure_memory or memory_reference is not None):
@@ -176,7 +191,7 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
                                or memory_export is not None
                                or (scenario == "restart" and restart_case != "software")):
         raise ValueError("Co-simulatie ondersteunt de Q Duo-rooktest, pr-memory, softwareherstart, HTTPS en de regelproeven met OpenTherm")
-    if scenario in ("mqtt-reconnect", "energy-boundary") and (network != "ethernet" or mode != "device"):
+    if scenario in ("mqtt-reconnect", "energy-boundary", "odu-profile-recovery") and (network != "ethernet" or mode != "device"):
         raise ValueError("Deze proef vereist de lokale Ethernet-fixture in device-modus")
     if scenario == "mqtt-reconnect":
         if memory_reference is not None:
@@ -280,10 +295,14 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
         ports["control"] = base + (4 if backend == "cosim" else 3)
     if scenario == "mqtt-reconnect":
         ports["mqtt"] = base + 3
+    if ha_api:
+        ports["ha_api"] = base + 4
     if ota_identity:
         ports["ota"] = base + 4
     if max(ports.values()) > 65535:
         raise ValueError("Poortreeks overschrijdt 65535")
+    if source:
+        info["firmware_source"] = source
     with reserve_ports(ports):
         return run_owned(firmware, info, seconds, mode, ports, name, temperature, network, scenario, measure_memory,
                          memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap,
@@ -291,7 +310,8 @@ def run(firmware, seconds=90, mode="device", base=19460, name="factory", tempera
                          assist_case=assist_case, handover_variant=handover_variant, restart_case=restart_case,
                          ota_image=ota_image, ota_identity=ota_identity, ota_python=ota_python,
                          memory_export=memory_export, export_min_rows=export_min_rows, export_probe=export_probe,
-                         export_seed=export_seed, dew_case=dew_case, energy_case=energy_case, backend=backend, ntp_epoch=ntp_epoch)
+                         export_seed=export_seed, dew_case=dew_case, energy_case=energy_case, backend=backend, ntp_epoch=ntp_epoch,
+                         mqtt_type=HaMqttReconnect if ha_api else MqttReconnect)
 
 
 def uses_cosim_modbus(backend, scenario):
@@ -302,7 +322,9 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
               memory_reference, memory_max_drop_bytes, baseline_firmware_sha256, without_overlap, https_fixture=None, power_house_climate=None,
               assist_case=None, handover_variant=None, restart_case=None, ota_image=None,
               ota_identity=None, ota_python=None, memory_export=None, export_min_rows=None,
-              export_probe=False, export_seed=False, dew_case=None, energy_case=None, backend="native", ntp_epoch=None):
+              export_probe=False, export_seed=False, dew_case=None, energy_case=None, backend="native", ntp_epoch=None,
+              mqtt_type=MqttReconnect):
+    checkout = emulator_checkout(ROOT)
     out = LAB / "runs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     out.mkdir(parents=True)
     flash = out / "flash.bin"
@@ -334,13 +356,14 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         "native_build": native_build, "extension_sha256": sha(extension) if extension else None,
         "executable_sha256": sha(executable), "odu_library_sha256": sha(odu_library), "network": probe.result,
     }
+    report["emulator_checkout"] = checkout
     if use_cosim:
         report["backend"] = backend
     if ntp_epoch is not None:
         report["ntp_fixture"] = {"epoch": ntp_epoch}
     if cosim_modbus or scenario == "odu-link-loss":
         report["modbus_timing_events"] = []
-    if scenario == "odu-link-loss":
+    if scenario in ("odu-link-loss", "odu-profile-recovery"):
         report["modbus_link_events"] = []
     if memory_export or scenario not in ("compatibility", "dynamics", "pr-memory"):
         report["source_snapshot"] = "scenario-source"
@@ -380,6 +403,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
     for key in ("OQ_NATIVE_GUEST_CLOCK", "OQ_NATIVE_OT_CONTROL", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD",
                 "OQ_NATIVE_SPI_TRACE", "OQ_NATIVE_SPI_MODE", "OQ_W5500_PORT", "OQ_W5500_CABLE",
                 "OQ_LOCAL_TLS_PORT", "OQ_LOCAL_EPOCH", "OQ_LOCAL_MQTT_PORT", "OQ_NATIVE_RTD_CONTROL",
+                "OQ_NATIVE_API_PORT",
                 "OQ_NATIVE_OTB_DISCONNECTED", "OQ_NATIVE_OTB_WATER_CONTROL",
                 "OQ_NATIVE_OTT_ROOM", "OQ_NATIVE_OTT_SETPOINT", "OQ_NATIVE_OTA_PORT"):
         env.pop(key, None)
@@ -410,14 +434,17 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
         if scenario == "https" and identity.get("factory_sha256") != info["sha256"]:
             raise ValueError("HTTPS success test requires the factory bin bound to this test CA fixture")
 
-    fleet = (ResponseFleet if scenario.startswith("odu-") else model.OduFleet)(odu_library)
+    fleet_type = {"odu-response": ResponseFleet, "odu-transients": ResponseFleet,
+                  "odu-link-loss": ResponseFleet, "pump-postflow": PostflowFleet}.get(scenario, model.OduFleet)
+    fleet = fleet_type(odu_library)
     model_epoch = time.monotonic()
 
     def odu_clock():
         return int((time.monotonic() - model_epoch) * 1000)
 
     rebooting = bool(restart_case or energy_case)
-    peer = RtuPeer(fleet, odu_clock if rebooting else guest_clock if mode == "device" else None)
+    peer_type = ProfilePeer if scenario == "odu-profile-recovery" else RtuPeer
+    peer = peer_type(fleet, odu_clock if rebooting else guest_clock if mode == "device" else None)
     dynamics = mqtt = None
     if scenario in DYNAMIC_SCENARIOS:
         thermostat = out / "thermostat-heat"
@@ -434,9 +461,15 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
             dynamics = DewGuard(thermostat, fleet, dew_case or "rise")
         elif scenario == "odu-link-loss":
             dynamics = OduLinkLoss(thermostat, fleet, peer)
+        elif scenario == "odu-profile-recovery":
+            dynamics = OduProfileRecovery(thermostat, fleet, peer)
         elif scenario == "mqtt-reconnect":
             broker = LocalBroker(ports["mqtt"], guest_clock)
-            dynamics = mqtt = MqttReconnect(thermostat, fleet, broker, ports["ethernet"], guest_clock)
+            api_options = {}
+            if "ha_api" in ports:
+                env["OQ_NATIVE_API_PORT"] = str(ports["ha_api"])
+                api_options["api_port"] = ports["ha_api"]
+            dynamics = mqtt = mqtt_type(thermostat, fleet, broker, ports["ethernet"], guest_clock, **api_options)
             env["OQ_LOCAL_MQTT_PORT"] = str(ports["mqtt"])
         elif energy_case:
             dynamics = EnergyBoundary(thermostat, fleet, energy_case, ports["control"], guest_clock)
@@ -491,7 +524,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                             report["modbus_timing_warnings"].append(line.strip())
                             if "modbus_timing_events" in report:
                                 report["modbus_timing_events"].append({"line": line.strip(), "guest_ms": guest_clock()})
-                        if scenario == "odu-link-loss" and ("HP2 - Modbus OFFLINE" in line or "HP2 - Modbus ONLINE" in line):
+                        if "modbus_link_events" in report and ("HP2 - Modbus OFFLINE" in line or "HP2 - Modbus ONLINE" in line):
                             report["modbus_link_events"].append({"line": line.strip(), "guest_ms": guest_clock()})
                         if "Active connection: WiFi (automatic recovery)" in line:
                             report.setdefault("wifi_recovery_event_s", time.monotonic() - started)
@@ -942,6 +975,7 @@ def run_owned(firmware, info, seconds, mode, ports, name, temperature, network, 
                 report["export_memory"] = {"checks": {"evidence_complete": False}}
         if _cancel_requested:
             report["cancelled"] = True
+        report["emulator_checkout_at_end"] = emulator_checkout(ROOT)
         report["qualification"], report["failure_reasons"] = qualify(report)
         if pr_load:
             report["pr_memory"]["assessment"] = pr_assessment(
@@ -985,6 +1019,9 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, terminate_owned)
     parser = argparse.ArgumentParser()
     parser.add_argument("--firmware", type=Path, required=True)
+    parser.add_argument("--firmware-revision", help="Volledige Git-commit van de aangeleverde firmware")
+    parser.add_argument("--firmware-config", help="Pad van de buildconfiguratie in de firmware-repo")
+    parser.add_argument("--ha-api", action="store_true", help="Voeg bij mqtt-reconnect een echte versleutelde ESPHome API-client toe")
     parser.add_argument("--seconds", type=int)
     parser.add_argument("--mode", choices=("baseline", "trace", "device"))
     parser.add_argument("--backend", choices=("native", "cosim"),
@@ -1025,7 +1062,7 @@ if __name__ == "__main__":
         default_duration = (1400 if scenario == "dew-guard" and args.dew_case == "loss"
                             else restart_seconds.get(args.restart_case, default_seconds[scenario]))
         seconds = args.seconds if args.seconds is not None else defaults.get("duration_s", default_duration)
-        scenario_temperature = {"defrost-assist": 34.0, "dew-guard": 18.0}.get(scenario, 30.0)
+        scenario_temperature = {"defrost-assist": 34.0, "odu-profile-recovery": 34.0, "dew-guard": 18.0}.get(scenario, 30.0)
         raise SystemExit(run(
             args.firmware, seconds, args.mode or defaults.get("mode", "device"), args.port_base, args.name,
             args.temperature if args.temperature is not None else defaults.get("fixture_temperature_c", scenario_temperature),
@@ -1038,7 +1075,8 @@ if __name__ == "__main__":
             restart_case=args.restart_case, ota_image=args.ota_image, ota_python=args.ota_python,
             memory_export=args.memory_export, export_min_rows=args.export_min_rows, export_probe=args.export_probe,
             export_seed=args.seed_forecast_export, dew_case=args.dew_case, energy_case=args.energy_case, backend=args.backend,
-            ntp_epoch=args.ntp_epoch,
+            ntp_epoch=args.ntp_epoch, firmware_revision=args.firmware_revision, firmware_config=args.firmware_config,
+            ha_api=args.ha_api,
         ))
     except ValueError as exc:
         parser.error(str(exc))

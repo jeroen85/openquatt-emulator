@@ -25,6 +25,8 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | OpenTherm, compressor-, flow- of defrostkoppeling | `dynamics` | Digitale OTT/OTB-uitwisseling en de gekoppelde toestanden op macOS. |
 | OpenTherm op Ubuntu | [`dynamics` met co-simulatie](handleiding.md#opentherm-uitval-en-herstel-op-ubuntu) | Digitale communicatie met thermostaat en ketel, compressor, flow en defrost. |
 | Lowflowbeveiliging of vrijgave na flowherstel | `lowflow` | Beveiligingsingreep en herstel met de vastgelegde firmwaretimers. |
+| Vaste vorstcirculatie en pompuitloop | [`cm98-fixed-pump` en `pump-postflow`](#vorstcirculatie-en-pompuitloop) | Controle op iPWM bij flowverlies en op de volgorde van compressorstop, naloop en vorstcirculatie. |
+| ODU-profielen en periodieke herstelwrites | [`odu-profile-recovery`](#odu-profielen-na-een-korte-reset) | Reset HP2 tussen polls, verifieer P276 en bodemplaatinstellingen en controleer HP1. |
 | Web, netwerk, buffers, taken of andere geheugenbeïnvloedende code | `pr-memory` met baseline en kandidaat | Vergelijkende heapmeting onder gelijktijdige web/SSE-belasting; volg de [handleiding](handleiding.md#geheugenproef-voor-een-pr). |
 | Weer-/manifestverzoeken, TLS-worker of gelijktijdige webactiviteit | `https` | Geslaagde TLS, serialisatie, verbinding afbreken en herstel met de lokale test-CA-build. |
 | Ethernetdriver of netwerkterugval | `compatibility` op Ethernet of met `--network failover` | DHCP, bereikbaarheid en herstel via Wi-Fi. |
@@ -34,7 +36,7 @@ Power House is de primaire regelroute van OpenQuatt. Bij wijzigingen aan de warm
 | Koelbeveiliging bij een ongeldig of hoog dauwpunt | [`dew-guard`](#dauwpuntbeveiliging-bij-koelen) | Compressorstop, wachttijd en herstart met veilig dauwpunt. |
 | Ketelhulp tijdens defrost | [`defrost-assist`](#ketelhulp-tijdens-defrost) | R1 of OpenTherm, inclusief de betreffende CM3-timers en beveiligingen. |
 | OpenTherm-thermostaat en bronselectie | [`ott-setpoint`](#opentherm-setpointgrenzen) | Verse digitale waarden, setpointgrenzen en herstel. |
-| MQTT-ingress, reconnect en webbelasting | [`mqtt-reconnect`](#mqtt-herverbinding-onder-webbelasting) | Sessie-uitval, verse vrijgave na herstel, webverkeer en heap in hetzelfde venster. |
+| MQTT-ingress, Home Assistant, reconnect en webbelasting | [`mqtt-reconnect`](#mqtt-herverbinding-onder-webbelasting), eventueel met `--ha-api` | Verse vrijgave na herstel, SSE/GET en heap per venster, met optioneel een versleutelde ESPHome API-sessie. |
 | Uur- en daggrens van het energiearchief | [`energy-boundary`](#uur--en-daggrens-van-de-energiehistorie) | Uurtoedeling, dagafsluiting, herstelmarkering en behoud bij herstart. |
 | OTA, opslag, herstart of ODU-overname | [`restart`](#herstart-en-ota) | Nieuwe boot, bewaarde instelling en ODU-continuïteit, afhankelijk van de variant. |
 | Geheugen bij recorder- of Vooruitblik-export | [`pr-memory --memory-export`](#geheugen-tijdens-een-export) | Echte download tijdens webbelasting en gerichte meetdekking rond de overdracht. |
@@ -352,6 +354,33 @@ De twee dauwpuntvarianten meten een verschillend firmwarepad. Een bevestigde ove
 
 De stopmelding heeft een resolutie van één seconde. Voor de minimum-uit-tijd gebruikt de toets het vroegste mogelijke stoptijdstip. Voor de bovengrens op de looptijd bij hoog dauwpunt gebruikt hij het laatste mogelijke stoptijdstip en de eerste bevestigde Modbus-opdracht voor koelen. De proef gebruikt een vaste aanvoermeting en het contract uit `tests/python/test_cooling_request_dew_stop_runtime.py` in OpenQuatt.
 
+## Vorstcirculatie en pompuitloop
+
+Beide proeven draaien lokaal op de native backend op Apple Silicon. Gebruik de gewone Q Duo-factory-bin van de revisie die je wilt beoordelen. De lange scenario’s in deze secties zijn losse CLI-proeven voor de lokale HIL.
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --scenario cm98-fixed-pump --port-base 19600 --name q-duo-cm98
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --scenario pump-postflow --port-base 19610 --name q-duo-postflow
+```
+
+- **Vaste vorstcirculatie** gebruikt −2 °C en legt vier stabiele fasen vast op 800, 230, 0 en opnieuw 800 L/h. De nominale meetfase start zodra de twee opdrachten aantoonbaar zijn toegepast, binnen 20 gastseconden vanaf de eerste CM98-waarneming. In CM98 moeten beide virtuele pompen draaien met `R2015=800` en beide compressoren stilstaan. Het rapport bewaart samples per fase en de geaccepteerde Modbus-writes. Selecteer deze proef voor firmware met vaste CM98-pompaansturing, zoals in [OpenQuatt #1022](https://github.com/OpenQuatt/OpenQuatt/pull/1022).
+- **Pompuitloop** trekt de warmtevraag in tijdens Single-bedrijf. Na de stopopdracht speelt de HP1-fixture een aflopende compressorfrequentie van 70 naar 0 Hz na. De proef controleert flow en pomprelais zolang de compressor draait, de stopbewaking, twee 0 Hz-polls vóór CM98 en de volgorde van nulflow, pomp-write, eerstvolgende Modbus-metingen en gepubliceerde flow. De ingebouwde curve komt uit de replay voor [OpenQuatt #999](https://github.com/OpenQuatt/OpenQuatt/pull/999). De proef gebruikt de standaard compressorwachttijden en biedt 900 hostseconden voor de volledige reeks. Dit scenario verwacht de toenmalige CM98-regeling met een pompboost en hoort bij firmware waarin dat gedrag wordt verwacht. De fixture gebruikt afgeronde modelwaarden zonder veldopname.
+
+De twee scenario's hebben verschillende verwachtingen voor CM98. Kies op basis van de firmware en het gedrag dat je wilt toetsen. De flowcurves zijn fixturegedrag. Ze kwalificeren de volgorde en de firmwareopdrachten in deze serieopstelling.
+
+## ODU-profielen na een korte reset
+
+```sh
+python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
+  --network ethernet --scenario odu-profile-recovery --port-base 19620 --name q-duo-odu-profielen
+```
+
+Deze native proef gebruikt twee virtuele V1.5-buitenunits. Via de normale web-API stelt de runner P276 (`3275`) en het bodemplaatprofiel (`3236–3238`) in. Hij wacht op stabiel CM98 en herstart alleen HP2 ongeveer 400 gastmilliseconden tussen Modbus-polls. De controller moet HP2 online blijven zien. Bij de periodieke controle rond 600 gastseconden moeten de afwijkende registerwaarden opnieuw worden geschreven en teruggelezen. HP1 moet alleen de twee profieluitlezingen krijgen.
+
+Controleer `dynamics.odu_reset`, `profile_frames`, `interval_ms` en de afzonderlijke checks. Laat de gastklok de productie-interval volmaken. De standaarddeadline van 1050 hostseconden biedt ruimte voor boot en configuratie. Draait de gastklok langzaam, geef de proef meer hosttijd. De proef gebruikt uitsluitend de virtuele controller en de eigen flashkopie.
+
 ## MQTT-herverbinding onder webbelasting
 
 ```sh
@@ -364,6 +393,20 @@ De runner maakt per run een tijdelijke MQTT 3.1.1-broker op host-loopback. De fi
 De proef schakelt voor deze ingang de optie voor retained berichten uit. Daardoor hoort een geldige vrijgave bij de actieve sessie. De proef bevestigt eerst zo'n vrijgave. Met een werkende SSE-stream en geslaagde aanvragen van `/0.js` verbreekt de broker de verbinding minstens 26 gastseconden. Tijdens uitval moet de vrijgave ongeldig worden en moet een onafhankelijke kamerinput via de API doorwerken. Na de nieuwe sessie en het nieuwe abonnement blijft de broker minstens zes gastseconden stil. De proef controleert in die periode dat de oude vrijgave ongeldig blijft. Daarna stuurt de broker een vers bericht met de waarde `false`. OpenQuatt moet dit als geldige MQTT-invoer toepassen en de sessie tot aan afsluiting behouden.
 
 Het rapport toont de sessies, beide ontvangen waarden en bewezen overlap van SSE met downloads vóór, tijdens en na de storing. In `memory.phases` staan vrije interne heap, heapmin sinds boot en het grootste vrije blok in de rust-, uitval- en herstelvensters. De recorder meet elke tien gastseconden. De fixture test MQTT-ingress zonder TLS en gebruikt de productietimers.
+
+### Versleutelde Home Assistant API erbij
+
+Gebruik voor `--ha-api` de Python-omgeving van ESPHome of installeer in een aparte venv `aioesphomeapi==46.12.0`. De probe gebruikt de loopbackpoort op `--port-base + 4` en vraagt via de normale ESPHome-provisioning een tijdelijke Noise-sleutel aan op de verse virtuele flash. Gebruik een bin waarop die provisioning beschikbaar is. De HA-client gebruikt alleen entiteitsuitlezingen. De API-sleutel blijft in de lokale probe en de virtuele flash. De MQTT-fixture wijzigt uitsluitend de virtuele testinstellingen.
+
+```sh
+python3 -m scripts.native_spi.run --backend native --firmware "$oq_firmware" \
+  --network ethernet --scenario mqtt-reconnect --ha-api \
+  --port-base 19630 --name q-duo-ha-mqtt
+```
+
+`dynamics.ha_api` toont twee gescheiden versleutelde sessies en de ontvangen geldigheid en waarde voor MQTT-vrijgave. Tijdens de eerste sessie moet de geldigheid wegvallen bij brokeruitval en terugkomen na een vers bericht. De tweede sessie moet de herstelde waarde opnieuw ontvangen. `dynamics.client_overlap` toont volledige GETs die binnen dezelfde SSE- en HA-sessie vallen, per MQTT-fase. Vóór en na de uitval is ook MQTT actief. Tijdens de uitval blijven HA en web actief terwijl MQTT weg is. `memory.phases` toont de heap in de rustige aanloop, tijdens uitval en na herstel. Gebruik de gasttijden om activiteit en metingen aan elkaar te koppelen.
+
+Gebruik die vensters om zichtbaar gedrag aan heapmetingen te koppelen. De recorder bemonstert elke 10 gastseconden. Heapmin is cumulatief sinds boot. Voor een dip korter dan een recorderinterval of een causaal verschil bij bijvoorbeeld een extra lokale poll heb je gerichte meetpunten op gasttijd vóór, tijdens en na die activiteit nodig. Bewaar het start- en stoptijdstip en het herstel van vrije heap en grootste blok bij de meetreeks. Draai vergelijkende runs achter elkaar met dezelfde belasting.
 
 ## Uur- en daggrens van de energiehistorie
 

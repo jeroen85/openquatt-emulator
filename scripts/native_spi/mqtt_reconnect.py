@@ -13,6 +13,7 @@ TOPIC_KEY = "heating_enable"
 OUTAGE_MS = 26000
 QUIET_RECONNECT_MS = 6000
 MAX_FINAL_STATUS_AGE_MS = 7000
+MAX_CHECK_GAP_MS = 12000
 
 
 def receive_exact(connection, length):
@@ -209,6 +210,7 @@ class MqttReconnect(Dynamics):
         self.result.update(version=1)
         self.load = None
         self.topic = ""
+        self.last_valid_probe_ms = None
 
     def start(self, started, deadline, cancelled):
         self.started, self.deadline, self.cancelled = started, deadline, cancelled
@@ -231,9 +233,11 @@ class MqttReconnect(Dynamics):
         stage = self.result["stage"]
         raw = get("/mqtt/status")
         if not raw:
+            self.check_probe_age(stage, self.clock())
+            self.record_missing_probe()
             return
         status = json.loads(raw)
-        self.result["current"] = {"connected": status["connected"], "guest_ms": self.clock()}
+        self.result["current"] = {"connected": status.get("connected"), "guest_ms": self.clock()}
         if stage == "configure":
             if not (status["enabled"] and status["broker"] == BROKER_IP and status["port"] == 1883):
                 self.save(get, status, "/mqtt/save", enabled="true", broker=BROKER_IP, port=1883)
@@ -252,9 +256,27 @@ class MqttReconnect(Dynamics):
             return
         points = self.result["checkpoints"]
         heat = self.heating_enable(get)
-        connected = status["connected"] is True
+        connected = status.get("connected")
         sample = {"guest_ms": self.clock(), "connected": connected, "heating_enable": heat}
         self.result["current"] = sample
+        self.check_probe_age(stage, sample["guest_ms"])
+        # A field that was read successfully can contradict the expected
+        # state even if another GET in the same observation failed.
+        active = heat["valid"] is True or heat["enabled"] is True
+        if stage == "outage" and "outage_confirmed" in points and (connected is True or active):
+            raise RuntimeError("MQTT werd geldig terwijl de broker nog onbereikbaar was")
+        if stage == "resubscribe" and active:
+            raise RuntimeError("De oude MQTT-vrijgave werd geldig vóór een nieuw MQTT-bericht")
+        if stage in ("measure", "complete") and (
+            connected is False or heat["valid"] is False or heat["enabled"] is True
+            or (isinstance(heat.get("source"), str) and heat["source"] != "MQTT")
+        ):
+            raise RuntimeError("De herstelde MQTT-sessie bleef niet geldig")
+        if (type(connected) is not bool or type(heat["valid"]) is not bool or type(heat["enabled"]) is not bool
+                or not isinstance(heat.get("source"), str)):
+            self.record_missing_probe()
+            return
+        self.last_valid_probe_ms = sample["guest_ms"]
         if stage == "initial_publish":
             if connected and (sent := self.broker.publish(self.topic, True)):
                 points["initial_publish"] = sent
@@ -277,9 +299,7 @@ class MqttReconnect(Dynamics):
                 points["cut_ms"] = self.broker.set_online(False)
                 self.result["stage"] = "outage"
         elif stage == "outage":
-            if connected or heat["valid"] is not False or heat["enabled"] is not False:
-                if "outage_confirmed" in points:
-                    raise RuntimeError("MQTT werd geldig terwijl de broker nog onbereikbaar was")
+            if connected or active:
                 return
             points.setdefault("outage_confirmed", sample)
             if write_setting(get, "number", "api_input_room_temperature", 20):
@@ -290,8 +310,6 @@ class MqttReconnect(Dynamics):
                 points["restore_ms"] = self.broker.set_online(True)
                 self.result["stage"] = "resubscribe"
         elif stage == "resubscribe":
-            if heat["valid"] is not False or heat["enabled"] is not False:
-                raise RuntimeError("De oude MQTT-vrijgave werd geldig vóór een nieuw MQTT-bericht")
             sessions = self.broker.evidence()["sessions"]
             initial_session = points["initial_publish"]["session"]
             if not (connected and sessions and sessions[-1]["id"] > initial_session
@@ -307,9 +325,15 @@ class MqttReconnect(Dynamics):
                 points["fresh_applied"] = sample
                 self.result["stage"] = "measure"
         elif stage in ("measure", "complete"):
-            if not connected or heat != {"valid": True, "enabled": False, "source": "MQTT"}:
-                raise RuntimeError("De herstelde MQTT-sessie bleef niet geldig")
             self.result["last_confirmed_session_ms"] = sample["guest_ms"]
+
+    def check_probe_age(self, stage, now):
+        if (stage in ("outage", "resubscribe", "fresh_applied", "measure", "complete") and self.last_valid_probe_ms is not None
+                and now - self.last_valid_probe_ms > MAX_CHECK_GAP_MS):
+            raise RuntimeError("Te lang geen volledige MQTT-status via de web-app")
+
+    def record_missing_probe(self):
+        self.result["incomplete_web_samples"] = self.result.get("incomplete_web_samples", 0) + 1
 
     def windows(self):
         points = self.result["checkpoints"]

@@ -121,7 +121,7 @@ class MqttReconnectTests(unittest.TestCase):
         scenario.result["stage"] = "resubscribe"
         scenario.result["checkpoints"]["initial_publish"] = {"session": 1}
         scenario.topic = "topic"
-        scenario.heating_enable = Mock(return_value={"valid": False, "enabled": False})
+        scenario.heating_enable = Mock(return_value={"valid": False, "enabled": False, "source": "None"})
         get = Mock(return_value=b'{"connected":true}')
         scenario.observe(get)
         clock.return_value += QUIET_RECONNECT_MS - 1

@@ -169,9 +169,11 @@ python3 -m scripts.native_spi.run --firmware "$oq_firmware" \
 - `--seconds` bepaalt de meetduur in seconden op de host. Voor een volledige proef zijn de bovenstaande tijden een bruikbaar begin. De eerste build van de hostuitbreiding gebeurt vóór die meetduur.
 - `--temperature` stelt de PT1000-fixture in. Gebruik een punt bij decimalen, bijvoorbeeld `30.5`.
 - `--name` is het herkenbare voorvoegsel van de rapportmap. Gebruik letters, cijfers, underscores of koppeltekens en begin met een letter of cijfer.
-- `--port-base 19600` geeft Wi-Fi poort `19600`, Ethernet zo nodig `19601` en UART1 `19602`. Reserveer bij `mqtt-reconnect`, `energy-boundary` en `restart` ook `19603`. OTA gebruikt bovendien `19604`.
+- `--port-base 19600` geeft Wi-Fi poort `19600`, Ethernet zo nodig `19601` en UART1 `19602`. Reserveer bij `mqtt-reconnect`, `energy-boundary` en `restart` ook `19603`. OTA en `mqtt-reconnect --ha-api` gebruiken bovendien `19604`.
 
 Voor [MQTT-herverbinding](scenarios.md#mqtt-herverbinding-onder-webbelasting) en de [uur- en daggrens van de energiehistorie](scenarios.md#uur--en-daggrens-van-de-energiehistorie) kiest de CLI de lokale broker of klok. Beide proeven gebruiken Ethernet, een gewone Q Duo-factory-bin en een eigen flashkopie.
+
+Voeg voor een herleidbare proef `--firmware-revision <volledige-commit>` en `--firmware-config configs/heatpump_controller_q/duo.yaml` toe. Gebruik de waarden uit de buildgegevens van de gekozen bin. Het rapport bewaart ze als opgegeven herkomst naast de gemeten SHA-256 en ESP-IDF-versie. Laat beide opties weg wanneer de buildgegevens ontbreken.
 
 De CLI drukt aan het begin de rapportmap af als `run`. Exitcode `0` betekent dat alle controles van de gekozen proef geslaagd zijn. Elke andere exitcode betekent dat de proef is afgebroken, een controle faalde of de runner niet kon starten. Voor automatisering geef je de factory-bin door aan de CLI met de backend die het scenario ondersteunt. Gebruik de exitcode en bewaar het rapport van die specifieke proef.
 
@@ -324,6 +326,7 @@ Open het rapport via de werkbank of zoek `report.json` in de door de CLI gemelde
 | Beide buitenunits | `peer.recent` bevat geslaagde Modbus-registeruitlezingen voor unit `1` en `2`. Controleer ook `modbus_timing_warnings` en de CRC- en fouttellers onder `peer`. |
 | Ethernet | `network.ethernet_checks`, `network.ethernet_ip` en `network.wire` tonen geslaagde webcontroles, het gastadres, DHCP-bevestigingen en frameverkeer. |
 | Terugval | `network.ethernet_http_lost` bevestigt verlies van HTTP over Ethernet. `wifi_recovery_event_s` is het tijdstip van de herstelmelding van de firmware. `network.wifi_recovery_checks` telt de succesvolle Wi-Fi-controles na het lostrekken van de virtuele kabel. |
+| Emulatorrevisie | `emulator_checkout` en `emulator_checkout_at_end` tonen Git-commit en de status van de werkboom. Controleer bij lokale wijzigingen ook de bronhashes in `sources` en `native_build`. |
 | Herhaalbaarheid | `input.sha256` identificeert de firmware. `input_hash_unchanged` en `flash_file_unchanged` bevestigen de ongewijzigde bestanden. `native_build` bevat de toolchain en libslirp-versie. |
 
 Bij een dynamische native fixture vergelijkt de runner de directe webmeting

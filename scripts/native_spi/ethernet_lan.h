@@ -28,6 +28,7 @@ class EthernetLan {
     unsigned long mqtt_port;
     unsigned long epoch;
     unsigned long ota_port;
+    unsigned long api_port = 0;
   };
 
   EthernetLan(W5500& chip, int port, const char* cable_path, FILE* trace)
@@ -35,15 +36,16 @@ class EthernetLan {
                     {fixture_number("OQ_LOCAL_TLS_PORT", 1024, 65535),
                      fixture_number("OQ_LOCAL_MQTT_PORT", 1024, 65535),
                      fixture_number("OQ_LOCAL_EPOCH", 1700000000UL, 4000000000UL),
-                     fixture_number("OQ_NATIVE_OTA_PORT", 1024, 65535)},
+                     fixture_number("OQ_NATIVE_OTA_PORT", 1024, 65535),
+                     fixture_number("OQ_NATIVE_API_PORT", 1024, 65535)},
                     process_clock_start()) {}
 
   EthernetLan(W5500& chip, int port, const char* cable_path, FILE* trace, Services services,
               std::chrono::steady_clock::time_point clock_start)
       : chip_(chip), cable_path_(cable_path), trace_(trace), local_clock_start_(clock_start) {
-    const auto [tls, mqtt, epoch, ota] = services;
-    if ((tls && !epoch) || (tls && mqtt)) throw std::runtime_error("Invalid local services combination");
-    if (tls || mqtt || epoch) local_ = std::make_unique<LocalServices>(tls, epoch, mqtt);
+    const auto [tls, mqtt, epoch, ota, api] = services;
+    if ((tls && !epoch) || (tls && mqtt) || (api && !mqtt)) throw std::runtime_error("Invalid local services combination");
+    if (tls || mqtt || epoch) local_ = std::make_unique<LocalServices>(tls, epoch, mqtt, api != 0);
     advance_clock_ = epoch && !tls;
     SlirpConfig config{};
     config.version = std::min(6, SLIRP_CONFIG_VERSION_MAX);
@@ -74,6 +76,9 @@ class EthernetLan {
       throw std::runtime_error("Unable to listen on the W5500 HTTP port");
     if (ota && slirp_add_hostfwd(slirp_.get(), 0, ip("127.0.0.1"), static_cast<int>(ota), config.vdhcp_start, 3232) != 0)
       throw std::runtime_error("Unable to listen on the W5500 OTA port");
+    if (api && slirp_add_hostfwd(slirp_.get(), 0, ip("127.0.0.1"), static_cast<int>(api), config.vdhcp_start, 6053) != 0)
+      throw std::runtime_error("Unable to listen on the W5500 native API port");
+    if (local_) chip_.on_interface_reset = [this] { local_->clear_forwarded_connections(); };
     chip_.transmit = [this](const uint8_t* data, size_t size) {
       LocalServices::Bytes packet;
       if (local_) {
@@ -93,6 +98,7 @@ class EthernetLan {
 
   ~EthernetLan() {
     chip_.transmit = {};
+    chip_.on_interface_reset = {};
     slirp_.reset();
   }
 
@@ -217,24 +223,25 @@ class EthernetLan {
 
   void read_cable() {
     std::unique_ptr<FILE, CloseLanFile> file(std::fopen(cable_path_.c_str(), "r"));
-    if (!file) {
-      chip_.cable = false;
-      return;
-    }
-    const int command = std::fgetc(file.get());
-    chip_.cable = command == '1';
+    const bool connected = file && std::fgetc(file.get()) == '1';
+    if (chip_.cable && !connected && local_) local_->clear_forwarded_connections();
+    chip_.cable = connected;
   }
 
   static ssize_t receive_packet(const void* data, size_t size, void* opaque) {
     auto& self = *static_cast<EthernetLan*>(opaque);
     const auto* frame = static_cast<const uint8_t*>(data);
     LocalServices::Bytes packet;
+    auto receive = [&self](const auto& bytes) { return self.chip_.receive(bytes.data(), bytes.size()); };
+    bool accepted = false;
     if (self.local_) {
       packet.assign(frame, frame + size);
-      self.local_->incoming(packet);
+      accepted = self.local_->incoming(packet, receive);
       frame = packet.data();
+    } else {
+      accepted = self.chip_.receive(frame, size);
     }
-    if (self.chip_.receive(frame, size) && self.requested_) {
+    if (accepted && self.requested_) {
       const auto reply = dhcp(frame, size, 67, 68);
       const std::array<uint8_t, 4> expected_ip{10, 42, 0, 15};
       if (reply && reply->type == 5 && reply->xid == self.requested_->xid && reply->mac == self.requested_->mac &&
